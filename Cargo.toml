@@ -107,12 +107,17 @@ futures-core = { version = "0.3.28", default-features = false }
 futures-util = { version = "0.3.28", default-features = false }
 sync_wrapper = { version = "1.0", features = ["futures"] }
 
+
 # Optional deps...
 
 ## json
 serde_json = { version = "1.0", optional = true }
 ## multipart
 mime_guess = { version = "2.0", default-features = false, optional = true }
+
+[target.'cfg(not(target_os = "wasi"))'.dependencies]
+futures-core = { version = "0.3.0", default-features = false }
+futures-util = { version = "0.3.0", default-features = false }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dependencies]
 encoding_rs = { version = "0.8", optional = true }
@@ -188,14 +193,14 @@ system-configuration = { version = "0.6.0", optional = true }
 
 # wasm
 
-[target.'cfg(target_arch = "wasm32")'.dependencies]
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies]
 js-sys = "0.3.77"
 serde_json = "1.0"
 wasm-bindgen = "0.2.89"
 wasm-bindgen-futures = "0.4.18"
 wasm-streams = { version = "0.4", optional = true }
 
-[target.'cfg(target_arch = "wasm32")'.dependencies.web-sys]
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dependencies.web-sys]
 version = "0.3.28"
 features = [
     "AbortController",
@@ -215,9 +220,30 @@ features = [
     "ReadableStream"
 ]
 
-[target.'cfg(target_arch = "wasm32")'.dev-dependencies]
+[target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
 wasm-bindgen = { version = "0.2.89", features = ["serde-serialize"] }
 wasm-bindgen-test = "0.3"
+
+[target.'cfg(all(target_arch = "wasm32", target_os = "wasi"))'.dependencies]
+encoding_rs = "0.8"
+mime = "0.3.16"
+percent-encoding = "2.1"
+rand = "0.8.5"
+wit-bindgen = "0.8.0"
+
+[package.metadata.component]
+package = "reqwest:wasi"
+
+[package.metadata.component.target]
+path = "wit"
+
+[package.metadata.component.target.dependencies]
+"wasi:poll" = { path = "wit/deps/poll" }
+"wasi:io" = { path = "wit/deps/io" }
+"wasi:http" = { path = "wit/deps/http" }
+
+#[lib]
+#crate-type = ["cdylib"]
 
 [dev-dependencies]
 tower = { version = "0.5.2", default-features = false, features = ["limit"] }
