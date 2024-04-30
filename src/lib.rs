@@ -385,6 +385,7 @@ if_wasm! {
 }
 
 if_wasi! {
+    mod bindings;
     mod wasi;
     mod util;
 

@@ -19,12 +19,7 @@ rustdoc-args = ["--cfg", "docsrs", "--cfg", "reqwest_unstable"]
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
 [package.metadata.playground]
-features = [
-    "blocking",
-    "cookies",
-    "json",
-    "multipart",
-]
+features = ["blocking", "cookies", "json", "multipart"]
 
 [features]
 default = ["default-tls", "charset", "http2", "macos-system-configuration"]
@@ -124,13 +119,20 @@ encoding_rs = { version = "0.8", optional = true }
 http-body = "1"
 http-body-util = "0.1"
 hyper = { version = "1.1", features = ["http1", "client"] }
-hyper-util = { version = "0.1.10", features = ["http1", "client", "client-legacy", "tokio"] }
+hyper-util = { version = "0.1.10", features = [
+    "http1",
+    "client",
+    "client-legacy", "tokio",
+] }
 h2 = { version = "0.4", optional = true }
 once_cell = "1.18"
 log = "0.4.17"
 mime = "0.3.16"
 percent-encoding = "2.3"
-tokio = { version = "1.0", default-features = false, features = ["net", "time"] }
+tokio = { version = "1.0", default-features = false, features = [
+    "net",
+    "time",
+] }
 tower = { version = "0.5.2", default-features = false, features = ["timeout", "util"] }
 pin-project-lite = "0.2.11"
 ipnet = "2.3"
@@ -146,7 +148,9 @@ tokio-native-tls = { version = "0.3.0", optional = true }
 # rustls-tls
 hyper-rustls = { version = "0.27.0", default-features = false, optional = true, features = ["http1", "tls12"] }
 rustls = { version = "0.23.4", optional = true, default-features = false, features = ["std", "tls12"] }
-rustls-pki-types = { version = "1.1.0", features = ["alloc"] ,optional = true }
+rustls-pki-types = { version = "1.1.0", features = [
+    "alloc",
+] ,optional = true }
 tokio-rustls = { version = "0.26", optional = true, default-features = false, features = ["tls12"] }
 webpki-roots = { version = "0.26.0", optional = true }
 rustls-native-certs = { version = "0.8.0", optional = true }
@@ -156,8 +160,13 @@ cookie_crate = { version = "0.18.0", package = "cookie", optional = true }
 cookie_store = { version = "0.21.0", optional = true }
 
 ## compression
-async-compression = { version = "0.4.0", default-features = false, features = ["tokio"], optional = true }
-tokio-util = { version = "0.7.9", default-features = false, features = ["codec", "io"], optional = true }
+async-compression = { version = "0.4.0", default-features = false, features = [
+    "tokio",
+], optional = true }
+tokio-util = { version = "0.7.9", default-features = false, features = [
+    "codec",
+    "io",
+], optional = true }
 
 ## socks
 tokio-socks = { version = "0.5.2", optional = true }
@@ -168,20 +177,31 @@ hickory-resolver = { version = "0.24", optional = true, features = ["tokio-runti
 # HTTP/3 experimental support
 h3 = { version = "0.0.7", optional = true }
 h3-quinn = { version = "0.0.9", optional = true }
-quinn = { version = "0.11.1", default-features = false, features = ["rustls", "runtime-tokio"], optional = true }
-slab = { version = "0.4.9", optional = true } # just to get minimal versions working with quinn
+quinn = { version = "0.11.1", default-features = false, features = [
+    "rustls",
+    "runtime-tokio",
+], optional = true }slab = { version = "0.4.9", optional = true } # just to get minimal versions working with quinn
 futures-channel = { version = "0.3", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
 env_logger = "0.10"
-hyper = { version = "1.1.0", default-features = false, features = ["http1", "http2", "client", "server"] }
-hyper-util = { version = "0.1.10", features = ["http1", "http2", "client", "client-legacy", "server-auto", "tokio"] }
+hyper = { version = "1.1.0", default-features = false, features = [
+    "http1", "http2", "client", "server"] }
+hyper-util = { version = "0.1.10", features = [
+    "http1",
+    "http2",
+    "client",
+    "client-legacy", "server-auto", "tokio",
+] }
 serde = { version = "1.0", features = ["derive"] }
 libflate = "2.1"
 brotli_crate = { package = "brotli", version = "6.0.0" }
 zstd_crate = { package = "zstd", version = "0.13" }
 doc-comment = "0.3"
-tokio = { version = "1.0", default-features = false, features = ["macros", "rt-multi-thread"] }
+tokio = { version = "1.0", default-features = false, features = [
+    "macros",
+    "rt-multi-thread",
+] }
 futures-util = { version = "0.3.28", default-features = false, features = ["std", "alloc"] }
 rustls = { version = "0.23", default-features = false, features = ["ring"] }
 
@@ -217,7 +237,7 @@ features = [
     "ServiceWorkerGlobalScope",
     "RequestCredentials",
     "File",
-    "ReadableStream"
+    "ReadableStream",
 ]
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "unknown"))'.dev-dependencies]
@@ -225,7 +245,9 @@ wasm-bindgen = { version = "0.2.89", features = ["serde-serialize"] }
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "wasi"))'.dependencies]
-wit-bindgen = "0.16.0"
+wit-bindgen = { version = "=0.17.0", default-features = false, features = [
+    "realloc",
+] }
 encoding_rs = "0.8"
 mime = "0.3.16"
 percent-encoding = "2.1"
@@ -240,6 +262,10 @@ path = "wit"
 "wasi:clocks" = { path = "wit/deps/clocks" }
 "wasi:http" = { path = "wit/deps/http" }
 "wasi:io" = { path = "wit/deps/io" }
+"wasi:random" = { path = "wit/deps/random" }
+"wasi:cli" = { path = "wit/deps/cli" }
+"wasi:filesystem" = { path = "wit/deps/filesystem" }
+"wasi:sockets" = { path = "wit/deps/sockets" }
 
 #[lib]
 #crate-type = ["cdylib"]
