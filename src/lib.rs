@@ -338,7 +338,9 @@ fn _assert_impls() {
     assert_send::<Error>();
     assert_sync::<Error>();
 
+    #[cfg(not(all(target_arch = "wasm32", target_os = "wasi")))]
     assert_send::<Body>();
+    #[cfg(not(all(target_arch = "wasm32", target_os = "wasi")))]
     assert_sync::<Body>();
 }
 
@@ -362,7 +364,7 @@ if_hyper! {
 
 
     mod async_impl;
-    #[cfg(feature = "blocking")]
+    #[cfg(all(feature = "blocking", not(target_os="wasi")))]
     pub mod blocking;
     mod connect;
     #[cfg(feature = "cookies")]

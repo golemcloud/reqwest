@@ -180,7 +180,8 @@ h3-quinn = { version = "0.0.9", optional = true }
 quinn = { version = "0.11.1", default-features = false, features = [
     "rustls",
     "runtime-tokio",
-], optional = true }slab = { version = "0.4.9", optional = true } # just to get minimal versions working with quinn
+], optional = true }
+slab = { version = "0.4.9", optional = true } # just to get minimal versions working with quinn
 futures-channel = { version = "0.3", optional = true }
 
 [target.'cfg(not(target_arch = "wasm32"))'.dev-dependencies]
@@ -245,7 +246,7 @@ wasm-bindgen = { version = "0.2.89", features = ["serde-serialize"] }
 wasm-bindgen-test = "0.3"
 
 [target.'cfg(all(target_arch = "wasm32", target_os = "wasi"))'.dependencies]
-wit-bindgen-rt = { version = "0.26.0", features = ["bitflags"] }
+wit-bindgen-rt = { version = "0.41.0", features = ["bitflags"] }
 encoding_rs = "0.8"
 mime = "0.3.16"
 percent-encoding = "2.1"
