@@ -242,35 +242,6 @@
 //! [cargo-features]: https://doc.rust-lang.org/stable/cargo/reference/manifest.html#the-features-section
 //! [sponsor]: https://seanmonstar.com/sponsor
 
-#[cfg(all(feature = "http3", not(reqwest_unstable)))]
-compile_error!(
-    "\
-    The `http3` feature is unstable, and requires the \
-    `RUSTFLAGS='--cfg reqwest_unstable'` environment variable to be set.\
-"
-);
-
-macro_rules! if_wasm {
-    ($($item:item)*) => {$(
-        #[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-        $item
-    )*}
-}
-
-macro_rules! if_wasi {
-    ($($item:item)*) => {$(
-        #[cfg(all(target_arch = "wasm32", target_os = "wasi"))]
-        $item
-    )*}
-}
-
-macro_rules! if_hyper {
-    ($($item:item)*) => {$(
-        #[cfg(not(target_arch = "wasm32"))]
-        $item
-    )*}
-}
-
 pub use http::header;
 pub use http::Method;
 pub use http::{StatusCode, Version};
@@ -286,113 +257,12 @@ pub use self::error::{Error, Result};
 pub use self::into_url::IntoUrl;
 pub use self::response::ResponseBuilderExt;
 
-/// Shortcut method to quickly make a `GET` request.
-///
-/// See also the methods on the [`reqwest::Response`](./struct.Response.html)
-/// type.
-///
-/// **NOTE**: This function creates a new internal `Client` on each call,
-/// and so should not be used if making many requests. Create a
-/// [`Client`](./struct.Client.html) instead.
-///
-/// # Examples
-///
-/// ```rust
-/// # async fn run() -> Result<(), reqwest::Error> {
-/// let body = reqwest::get("https://www.rust-lang.org").await?
-///     .text().await?;
-/// # Ok(())
-/// # }
-/// ```
-///
-/// # Errors
-///
-/// This function fails if:
-///
-/// - native TLS backend cannot be initialized
-/// - supplied `Url` cannot be parsed
-/// - there was an error while sending request
-/// - redirect limit was exhausted
-#[cfg(not(target_os = "wasi"))]
-pub async fn get<T: IntoUrl>(url: T) -> crate::Result<Response> {
-    Client::builder().build()?.get(url).send().await
-}
+mod bindings;
+mod util;
+mod wasi;
 
-fn _assert_impls() {
-    fn assert_send<T: Send>() {}
-    fn assert_sync<T: Sync>() {}
-    fn assert_clone<T: Clone>() {}
+pub use self::wasi::{get, Body, Client, ClientBuilder, Request, RequestBuilder, Response};
+pub use bindings::wasi::io::streams::InputStream;
 
-    assert_send::<Client>();
-    assert_sync::<Client>();
-    assert_clone::<Client>();
-
-    assert_send::<Request>();
-    assert_send::<RequestBuilder>();
-
-    #[cfg(not(target_arch = "wasm32"))]
-    {
-        assert_send::<Response>();
-    }
-
-    assert_send::<Error>();
-    assert_sync::<Error>();
-
-    #[cfg(not(all(target_arch = "wasm32", target_os = "wasi")))]
-    assert_send::<Body>();
-    #[cfg(not(all(target_arch = "wasm32", target_os = "wasi")))]
-    assert_sync::<Body>();
-}
-
-if_hyper! {
-    #[cfg(test)]
-    #[macro_use]
-    extern crate doc_comment;
-
-    #[cfg(test)]
-    doctest!("../README.md");
-
-    pub use self::async_impl::{
-        Body, Client, ClientBuilder, Request, RequestBuilder, Response, Upgraded,
-    };
-    pub use self::proxy::{Proxy,NoProxy};
-    #[cfg(feature = "__tls")]
-    // Re-exports, to be removed in a future release
-    pub use tls::{Certificate, Identity};
-    #[cfg(feature = "multipart")]
-    pub use self::async_impl::multipart;
-
-
-    mod async_impl;
-    #[cfg(all(feature = "blocking", not(target_os="wasi")))]
-    pub mod blocking;
-    mod connect;
-    #[cfg(feature = "cookies")]
-    pub mod cookie;
-    pub mod dns;
-    mod proxy;
-    pub mod redirect;
-    #[cfg(feature = "__tls")]
-    pub mod tls;
-    mod util;
-}
-
-if_wasm! {
-    mod wasm;
-    mod util;
-
-    pub use self::wasm::{Body, Client, ClientBuilder, Request, RequestBuilder, Response};
-    #[cfg(feature = "multipart")]
-    pub use self::wasm::multipart;
-}
-
-if_wasi! {
-    mod bindings;
-    mod wasi;
-    mod util;
-
-    pub use self::wasi::{get, Body, Client, ClientBuilder, Request, RequestBuilder, Response};
-
-    #[cfg(feature = "multipart")]
-    pub use self::wasi::multipart;
-}
+#[cfg(feature = "multipart")]
+pub use self::wasi::multipart;

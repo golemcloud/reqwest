@@ -1,8 +1,9 @@
+use crate::bindings::wasi::io::streams::InputStream;
+use crate::bindings::wasi::io::*;
 use bytes::Bytes;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Cursor, Read};
-use crate::bindings::wasi::io::*;
 
 /// An asynchronous request body.
 #[derive(Debug)]
@@ -111,13 +112,25 @@ impl Body {
                             eof = true;
                         }
                         Err(streams::StreamError::LastOperationFailed(err)) => {
-                            return Err(crate::Error::new(crate::error::Kind::Body, Some(err.to_debug_string())));
+                            return Err(crate::Error::new(
+                                crate::error::Kind::Body,
+                                Some(err.to_debug_string()),
+                            ));
                         }
                     }
                 }
                 self.kind = Some(Kind::Bytes(body.into()));
                 self.buffer()
             }
+            None => panic!("Body has already been extracted"),
+        }
+    }
+
+    pub(crate) fn into_raw_input_stream(mut self) -> InputStream {
+        match self.kind.take() {
+            Some(Kind::Reader(_, _)) => panic!("Body is not backed up by an input stream"),
+            Some(Kind::Bytes(_)) => panic!("Body is not backed up by an input stream"),
+            Some(Kind::Incoming(handle)) => handle,
             None => panic!("Body has already been extracted"),
         }
     }
@@ -167,7 +180,10 @@ impl Body {
                             eof = true;
                         }
                         Err(streams::StreamError::LastOperationFailed(err)) => {
-                            return Err(crate::Error::new(crate::error::Kind::Body, Some(err.to_debug_string())));
+                            return Err(crate::Error::new(
+                                crate::error::Kind::Body,
+                                Some(err.to_debug_string()),
+                            ));
                         }
                     }
                 }

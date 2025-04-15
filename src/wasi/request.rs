@@ -1,12 +1,12 @@
+use http::header::CONTENT_TYPE;
 use http::{HeaderMap, HeaderName, HeaderValue, Method, Version};
-use http::header::{CONTENT_TYPE};
-use url::Url;
 use serde::Serialize;
 #[cfg(feature = "json")]
 use serde_json;
 use std::convert::TryFrom;
 use std::fmt;
 use std::time::Duration;
+use url::Url;
 
 use super::body::Body;
 use super::client::Client;
@@ -45,7 +45,6 @@ impl Request {
             body: None,
         }
     }
-
 
     /// Get the method.
     #[inline]
@@ -158,10 +157,7 @@ impl Request {
 
 impl RequestBuilder {
     pub(super) fn new(client: Client, request: crate::Result<Request>) -> RequestBuilder {
-        let mut builder = Self {
-            client,
-            request,
-        };
+        let mut builder = Self { client, request };
 
         let auth = builder
             .request
@@ -196,22 +192,22 @@ impl RequestBuilder {
 
     /// Add a `Header` to this Request.
     pub fn header<K, V>(self, key: K, value: V) -> RequestBuilder
-        where
-            HeaderName: TryFrom<K>,
-            <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-            HeaderValue: TryFrom<V>,
-            <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    where
+        HeaderName: TryFrom<K>,
+        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
         self.header_sensitive(key, value, false)
     }
 
     /// Add a `Header` to this Request with ability to define if `header_value` is sensitive.
     fn header_sensitive<K, V>(mut self, key: K, value: V, sensitive: bool) -> RequestBuilder
-        where
-            HeaderName: TryFrom<K>,
-            <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
-            HeaderValue: TryFrom<V>,
-            <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
+    where
+        HeaderName: TryFrom<K>,
+        <HeaderName as TryFrom<K>>::Error: Into<http::Error>,
+        HeaderValue: TryFrom<V>,
+        <HeaderValue as TryFrom<V>>::Error: Into<http::Error>,
     {
         let mut error = None;
         if let Ok(ref mut req) = self.request {
@@ -262,9 +258,9 @@ impl RequestBuilder {
     /// # }
     /// ```
     pub fn basic_auth<U, P>(self, username: U, password: Option<P>) -> RequestBuilder
-        where
-            U: fmt::Display,
-            P: fmt::Display,
+    where
+        U: fmt::Display,
+        P: fmt::Display,
     {
         let header_value = crate::util::basic_auth(username, password);
         self.header_sensitive(crate::header::AUTHORIZATION, header_value, true)
@@ -272,8 +268,8 @@ impl RequestBuilder {
 
     /// Enable HTTP bearer authentication.
     pub fn bearer_auth<T>(self, token: T) -> RequestBuilder
-        where
-            T: fmt::Display,
+    where
+        T: fmt::Display,
     {
         let header_value = format!("Bearer {}", token);
         self.header_sensitive(crate::header::AUTHORIZATION, header_value, true)

@@ -107,9 +107,9 @@ impl Form {
     ///     .text("password", "secret");
     /// ```
     pub fn text<T, U>(self, name: T, value: U) -> Form
-        where
-            T: Into<Cow<'static, str>>,
-            U: Into<Cow<'static, str>>,
+    where
+        T: Into<Cow<'static, str>>,
+        U: Into<Cow<'static, str>>,
     {
         self.part(name, Part::text(value))
     }
@@ -132,17 +132,17 @@ impl Form {
     ///
     /// Errors when the file cannot be opened.
     pub fn file<T, U>(self, name: T, path: U) -> io::Result<Form>
-        where
-            T: Into<Cow<'static, str>>,
-            U: AsRef<Path>,
+    where
+        T: Into<Cow<'static, str>>,
+        U: AsRef<Path>,
     {
         Ok(self.part(name, Part::file(path)?))
     }
 
     /// Adds a customized Part.
     pub fn part<T>(self, name: T, part: Part) -> Form
-        where
-            T: Into<Cow<'static, str>>,
+    where
+        T: Into<Cow<'static, str>>,
     {
         self.with_inner(move |inner| inner.part(name, part))
     }
@@ -174,8 +174,8 @@ impl Form {
     }
 
     fn with_inner<F>(self, func: F) -> Self
-        where
-            F: FnOnce(FormParts<Part>) -> FormParts<Part>,
+    where
+        F: FnOnce(FormParts<Part>) -> FormParts<Part>,
     {
         Form {
             inner: func(self.inner),
@@ -192,8 +192,8 @@ impl fmt::Debug for Form {
 impl Part {
     /// Makes a text parameter.
     pub fn text<T>(value: T) -> Part
-        where
-            T: Into<Cow<'static, str>>,
+    where
+        T: Into<Cow<'static, str>>,
     {
         let body = match value.into() {
             Cow::Borrowed(slice) => Body::from(slice),
@@ -204,8 +204,8 @@ impl Part {
 
     /// Makes a new parameter from arbitrary bytes.
     pub fn bytes<T>(value: T) -> Part
-        where
-            T: Into<Cow<'static, [u8]>>,
+    where
+        T: Into<Cow<'static, [u8]>>,
     {
         let body = match value.into() {
             Cow::Borrowed(slice) => Body::from(slice),
@@ -269,8 +269,8 @@ impl Part {
 
     /// Sets the filename, builder style.
     pub fn file_name<T>(self, filename: T) -> Part
-        where
-            T: Into<Cow<'static, str>>,
+    where
+        T: Into<Cow<'static, str>>,
     {
         self.with_inner(move |inner| inner.file_name(filename))
     }
@@ -281,8 +281,8 @@ impl Part {
     }
 
     fn with_inner<F>(self, func: F) -> Self
-        where
-            F: FnOnce(PartMetadata) -> PartMetadata,
+    where
+        F: FnOnce(PartMetadata) -> PartMetadata,
     {
         Part {
             meta: func(self.meta),
@@ -391,7 +391,6 @@ impl Read for Reader {
     }
 }
 
-
 // ===== impl FormParts =====
 
 impl<P: PartProps> FormParts<P> {
@@ -410,8 +409,8 @@ impl<P: PartProps> FormParts<P> {
 
     /// Adds a customized Part.
     pub(crate) fn part<T>(mut self, name: T, part: P) -> Self
-        where
-            T: Into<Cow<'static, str>>,
+    where
+        T: Into<Cow<'static, str>>,
     {
         self.fields.push((name.into(), part));
         self
@@ -502,16 +501,16 @@ impl PartMetadata {
     }
 
     pub(crate) fn file_name<T>(mut self, filename: T) -> Self
-        where
-            T: Into<Cow<'static, str>>,
+    where
+        T: Into<Cow<'static, str>>,
     {
         self.file_name = Some(filename.into());
         self
     }
 
     pub(crate) fn headers<T>(mut self, headers: T) -> Self
-        where
-            T: Into<HeaderMap>,
+    where
+        T: Into<HeaderMap>,
     {
         self.headers = headers.into();
         self
@@ -741,4 +740,3 @@ mod tests {
         assert_eq!(std::str::from_utf8(&output).unwrap(), expected);
     }
 }
-

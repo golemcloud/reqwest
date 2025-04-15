@@ -16,6 +16,7 @@ use url::Url;
 use crate::Body;
 
 use crate::bindings::wasi::http::*;
+use crate::bindings::wasi::io::streams::InputStream;
 
 /// A Response to a submitted `Request`.
 #[derive(Debug)]
@@ -132,19 +133,6 @@ impl Response {
     #[inline]
     pub fn headers_mut(&mut self) -> &mut HeaderMap {
         &mut self.headers
-    }
-
-    /// Retrieve the cookies contained in the response.
-    ///
-    /// Note that invalid 'Set-Cookie' headers will be ignored.
-    ///
-    /// # Optional
-    ///
-    /// This requires the optional `cookies` feature to be enabled.
-    #[cfg(feature = "cookies")]
-    #[cfg_attr(docsrs, doc(cfg(feature = "cookies")))]
-    pub fn cookies<'a>(&'a self) -> impl Iterator<Item = cookie::Cookie<'a>> + 'a {
-        cookie::extract_response_cookies(self.headers()).filter_map(Result::ok)
     }
 
     /// Get the HTTP `Version` of this `Response`.
@@ -266,6 +254,13 @@ impl Response {
     pub fn bytes(mut self) -> crate::Result<Bytes> {
         let bytes: Bytes = Bytes::copy_from_slice(self.body.take().unwrap().buffer()?);
         Ok(bytes)
+    }
+
+    /// Gets the underlying WASI response body stream. If the body was already consumed and/or buffered,
+    /// it fails with a panic.
+    pub fn get_raw_input_stream(&mut self) -> InputStream {
+        let body = self.body.take().unwrap();
+        body.into_raw_input_stream()
     }
 
     /// Get the response text.

@@ -121,24 +121,6 @@ impl Error {
         matches!(self.inner.kind, Kind::Request)
     }
 
-    #[cfg(not(target_arch = "wasm32"))]
-    /// Returns true if the error is related to connect
-    pub fn is_connect(&self) -> bool {
-        let mut source = self.source();
-
-        while let Some(err) = source {
-            if let Some(hyper_err) = err.downcast_ref::<hyper_util::client::legacy::Error>() {
-                if hyper_err.is_connect() {
-                    return true;
-                }
-            }
-
-            source = err.source();
-        }
-
-        false
-    }
-
     /// Returns true if the error is related to the request or response body
     pub fn is_body(&self) -> bool {
         matches!(self.inner.kind, Kind::Body)
@@ -162,19 +144,6 @@ impl Error {
     #[allow(unused)]
     pub(crate) fn into_io(self) -> io::Error {
         io::Error::new(io::ErrorKind::Other, self)
-    }
-}
-
-/// Converts from external types to reqwest's
-/// internal equivalents.
-///
-/// Currently only is used for `tower::timeout::error::Elapsed`.
-#[cfg(not(target_arch = "wasm32"))]
-pub(crate) fn cast_to_internal_error(error: BoxError) -> BoxError {
-    if error.is::<tower::timeout::error::Elapsed>() {
-        Box::new(crate::error::TimedOut) as BoxError
-    } else {
-        error
     }
 }
 
@@ -229,20 +198,6 @@ impl StdError for Error {
     }
 }
 
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-impl From<crate::error::Error> for wasm_bindgen::JsValue {
-    fn from(err: Error) -> wasm_bindgen::JsValue {
-        js_sys::Error::from(err).into()
-    }
-}
-
-#[cfg(all(target_arch = "wasm32", target_os = "unknown"))]
-impl From<crate::error::Error> for js_sys::Error {
-    fn from(err: Error) -> js_sys::Error {
-        js_sys::Error::new(&format!("{err}"))
-    }
-}
-
 #[derive(Debug)]
 pub(crate) enum Kind {
     Builder,
@@ -288,28 +243,11 @@ pub(crate) fn url_invalid_uri(url: Url) -> Error {
     Error::new(Kind::Builder, Some("Parsed Url is not a valid Uri")).with_url(url)
 }
 
-if_wasm! {
-    pub(crate) fn wasm(js_val: wasm_bindgen::JsValue) -> BoxError {
-        format!("{js_val:?}").into()
-    }
-}
-
 pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Upgrade, Some(e))
 }
 
 // io::Error helpers
-
-#[cfg(any(
-    feature = "gzip",
-    feature = "zstd",
-    feature = "brotli",
-    feature = "deflate",
-    feature = "blocking",
-))]
-pub(crate) fn into_io(e: BoxError) -> io::Error {
-    io::Error::new(io::ErrorKind::Other, e)
-}
 
 #[allow(unused)]
 pub(crate) fn decode_io(e: io::Error) -> Error {

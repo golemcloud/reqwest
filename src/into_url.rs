@@ -73,14 +73,6 @@ impl IntoUrlSealed for String {
     }
 }
 
-if_hyper! {
-    pub(crate) fn try_uri(url: &Url) -> crate::Result<http::Uri> {
-        url.as_str()
-            .parse()
-            .map_err(|_| crate::error::url_invalid_uri(url.clone()))
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -102,16 +94,5 @@ mod tests {
             err.source().unwrap().to_string(),
             "URL scheme is not allowed"
         );
-    }
-
-    if_wasm! {
-        use wasm_bindgen_test::*;
-
-        #[wasm_bindgen_test]
-        fn into_url_blob_scheme_wasm() {
-            let url = "blob:http://example.com".into_url().unwrap();
-
-            assert_eq!(url.as_str(), "blob:http://example.com");
-        }
     }
 }
