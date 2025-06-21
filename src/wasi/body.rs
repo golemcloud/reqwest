@@ -152,6 +152,14 @@ impl Body {
             .map(|kind| Body { kind: Some(kind) })
     }
 
+    pub(crate) fn len(&self) -> Option<u64> {
+        match self.kind.as_ref()? {
+            Kind::Reader(_, len) => *len,
+            Kind::Bytes(bytes) => Some(bytes.len() as u64),
+            Kind::Incoming(_) => None,
+        }
+    }
+
     pub(crate) fn write(
         mut self,
         mut f: impl FnMut(&[u8]) -> Result<(), crate::Error>,

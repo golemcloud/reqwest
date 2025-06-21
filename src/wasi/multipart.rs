@@ -439,7 +439,7 @@ impl<P: PartProps> FormParts<P> {
     // but not if a generic reader has been added;
     pub(crate) fn compute_length(&mut self) -> Option<u64> {
         let mut length = 0u64;
-        for &(ref name, ref field) in self.fields.iter() {
+        for (name, field) in self.fields.iter() {
             match field.value_len() {
                 Some(value_length) => {
                     // We are constructing the header just to get its length. To not have to
@@ -467,11 +467,6 @@ impl<P: PartProps> FormParts<P> {
             length += 2 + self.boundary().len() as u64 + 4
         }
         Some(length)
-    }
-
-    /// Take the fields vector of this instance, replacing with an empty vector.
-    fn take_fields(&mut self) -> Vec<(Cow<'static, str>, P)> {
-        std::mem::replace(&mut self.fields, Vec::new())
     }
 }
 
@@ -623,11 +618,11 @@ impl PercentEncoding {
 fn gen_boundary() -> String {
     use rand::prelude::*;
 
-    let mut rng = rand::thread_rng();
-    let a = rng.gen::<u64>();
-    let b = rng.gen::<u64>();
-    let c = rng.gen::<u64>();
-    let d = rng.gen::<u64>();
+    let mut rng = rand::rng();
+    let a = rng.random::<u64>();
+    let b = rng.random::<u64>();
+    let c = rng.random::<u64>();
+    let d = rng.random::<u64>();
 
     format!("{:016x}-{:016x}-{:016x}-{:016x}", a, b, c, d)
 }
@@ -738,5 +733,31 @@ mod tests {
         );
         println!("START EXPECTED\n{}\nEND EXPECTED", expected);
         assert_eq!(std::str::from_utf8(&output).unwrap(), expected);
+    }
+
+    #[test]
+    fn test_boundary_generation() {
+        let boundary1 = gen_boundary();
+        let boundary2 = gen_boundary();
+
+        assert_ne!(boundary1, boundary2);
+
+        assert!(!boundary1.is_empty());
+        assert!(!boundary2.is_empty());
+
+        for c in boundary1.chars() {
+            assert!(c.is_ascii_hexdigit() || c == '-');
+        }
+        for c in boundary2.chars() {
+            assert!(c.is_ascii_hexdigit() || c == '-');
+        }
+
+        // Should follow the expected format (16 hex chars, dash, repeat 4 times)
+        let parts: Vec<&str> = boundary1.split('-').collect();
+        assert_eq!(parts.len(), 4);
+        for part in parts {
+            assert_eq!(part.len(), 16);
+            assert!(part.chars().all(|c| c.is_ascii_hexdigit()));
+        }
     }
 }
