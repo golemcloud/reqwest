@@ -179,6 +179,14 @@ impl Body {
             .map(|kind| Body { kind: Some(kind) })
     }
 
+    pub(crate) fn len(&self) -> Option<u64> {
+        match self.kind.as_ref()? {
+            Kind::Reader(_, len) => *len,
+            Kind::Bytes(bytes) => Some(bytes.len() as u64),
+            Kind::Incoming(_) => None,
+        }
+    }
+
     pub(crate) fn write(
         mut self,
         mut f: impl FnMut(&[u8]) -> Result<(), crate::Error>,
@@ -358,7 +366,8 @@ mod tests {
         let mut chunk_iter = ChunkIter::new(&data, 5);
 
         assert_eq!(chunk_iter.next(), Some(&b"hello"[..]));
-        assert_eq!(chunk_iter.next(), Some(&b" world"[..]));
+        assert_eq!(chunk_iter.next(), Some(&b" worl"[..]));
+        assert_eq!(chunk_iter.next(), Some(&b"d"[..]));
         assert_eq!(chunk_iter.next(), None);
     }
 
@@ -367,8 +376,8 @@ mod tests {
         let data = b"hello world".to_vec();
         let mut chunk_iter = ChunkIter::new(&data, 7);
 
-        assert_eq!(chunk_iter.next(), Some(&b"hello wo"[..]));
-        assert_eq!(chunk_iter.next(), Some(&b"rld"[..]));
+        assert_eq!(chunk_iter.next(), Some(&b"hello w"[..]));
+        assert_eq!(chunk_iter.next(), Some(&b"orld"[..]));
         assert_eq!(chunk_iter.next(), None);
     }
 
