@@ -216,8 +216,7 @@ impl Client {
                 .write()
                 .map_err(|e| failure_point("write", e))?;
             body.write(|chunk| {
-                request_body_stream.write(chunk)?;
-                request_body_stream.flush()?;
+                request_body_stream.blocking_write_and_flush(chunk)?;
                 Ok(())
             })?;
             drop(request_body_stream);

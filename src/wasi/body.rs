@@ -193,7 +193,7 @@ impl Body {
     ) -> Result<(), crate::Error> {
         match self.kind.take().expect("Body has already been extracted") {
             Kind::Reader(mut reader, _) => {
-                let mut buf = [0; 2];
+                let mut buf = [0; 4 * 1024];
                 loop {
                     let len = reader.read(&mut buf).map_err(crate::error::builder)?;
                     if len == 0 {
@@ -203,7 +203,7 @@ impl Body {
                 }
                 Ok(())
             }
-            Kind::Bytes(bytes) => ChunkIter::new(&bytes, 2).try_for_each(&mut f),
+            Kind::Bytes(bytes) => ChunkIter::new(&bytes, 4 * 1024).try_for_each(&mut f),
             Kind::Incoming(ref body_stream) => {
                 let mut eof = false;
                 while !eof {
