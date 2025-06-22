@@ -216,7 +216,17 @@ impl Client {
                 .write()
                 .map_err(|e| failure_point("write", e))?;
             body.write(|chunk| {
-                request_body_stream.blocking_write_and_flush(chunk)?;
+                let mut remaining = chunk;
+                while !remaining.is_empty() {
+                    let n = request_body_stream.check_write()?;
+                    println!("Writing {} bytes", n);
+
+                    let write_size = std::cmp::min(n, remaining.len() as u64);
+                    let (to_write, rest) = remaining.split_at(write_size as usize);
+                    request_body_stream.write(to_write)?;
+                    remaining = rest;
+                }
+
                 Ok(())
             })?;
             drop(request_body_stream);
