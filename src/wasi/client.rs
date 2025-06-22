@@ -210,20 +210,17 @@ impl Client {
             .set_authority(Some(url.authority()))
             .map_err(|e| failure_point("set_authority", e))?;
 
-        match body {
-            Some(body) => {
-                let request_body = request.body().map_err(|e| failure_point("body", e))?;
-                let request_body_stream = request_body
-                    .write()
-                    .map_err(|e| failure_point("write", e))?;
-                body.write(|chunk| {
-                    request_body_stream.write(chunk)?;
-                    Ok(())
-                })?;
-                drop(request_body_stream);
-                types::OutgoingBody::finish(request_body, None)?;
-            }
-            None => {}
+        if let Some(body) = body {
+            let request_body = request.body().map_err(|e| failure_point("body", e))?;
+            let request_body_stream = request_body
+                .write()
+                .map_err(|e| failure_point("write", e))?;
+            body.write(|chunk| {
+                request_body_stream.write(chunk)?;
+                Ok(())
+            })?;
+            drop(request_body_stream);
+            types::OutgoingBody::finish(request_body, None)?;
         }
 
         let options = types::RequestOptions::new();
