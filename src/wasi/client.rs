@@ -219,12 +219,14 @@ impl Client {
                 let mut remaining = chunk;
                 while !remaining.is_empty() {
                     let n = request_body_stream.check_write()?;
-                    println!("Writing {} bytes", n);
+                    println!("Write capacity {} bytes", n);
 
-                    let write_size = std::cmp::min(n, remaining.len() as u64);
-                    let (to_write, rest) = remaining.split_at(write_size as usize);
-                    request_body_stream.write(to_write)?;
-                    remaining = rest;
+                    if n != 0 {
+                        let write_size = std::cmp::min(n, remaining.len() as u64);
+                        let (to_write, rest) = remaining.split_at(write_size as usize);
+                        request_body_stream.write(to_write)?;
+                        remaining = rest;
+                    }
                 }
 
                 Ok(())
