@@ -11,18 +11,18 @@ pub struct Body {
     kind: Option<Kind>,
 }
 
-struct ChunkIter<'a> {
+struct ChunkIterator<'a> {
     bytes: &'a [u8],
     chunk_size: usize,
 }
 
-impl<'a> ChunkIter<'a> {
+impl<'a> ChunkIterator<'a> {
     fn new(bytes: &'a [u8], chunk_size: usize) -> Self {
-        ChunkIter { bytes, chunk_size }
+        ChunkIterator { bytes, chunk_size }
     }
 }
 
-impl<'a> Iterator for ChunkIter<'a> {
+impl<'a> Iterator for ChunkIterator<'a> {
     type Item = &'a [u8];
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -203,7 +203,7 @@ impl Body {
                 }
                 Ok(())
             }
-            Kind::Bytes(bytes) => ChunkIter::new(&bytes, 4 * 1024).try_for_each(&mut f),
+            Kind::Bytes(bytes) => ChunkIterator::new(&bytes, 4 * 1024).try_for_each(&mut f),
             Kind::Incoming(ref body_stream) => {
                 let mut eof = false;
                 while !eof {
@@ -361,9 +361,9 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_chunk_iter_regular_slices() {
+    fn test_chunk_iterator_regular_slices() {
         let data = b"hello world".to_vec();
-        let mut chunk_iter = ChunkIter::new(&data, 5);
+        let mut chunk_iter = ChunkIterator::new(&data, 5);
 
         assert_eq!(chunk_iter.next(), Some(&b"hello"[..]));
         assert_eq!(chunk_iter.next(), Some(&b" worl"[..]));
@@ -372,27 +372,27 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_iter_only_one_chunk() {
+    fn test_chunk_iterator_only_one_chunk() {
         let data = b"hello world".to_vec();
-        let mut chunk_iter = ChunkIter::new(&data, 11);
+        let mut chunk_iter = ChunkIterator::new(&data, 11);
 
         assert_eq!(chunk_iter.next(), Some(&b"hello world"[..]));
         assert_eq!(chunk_iter.next(), None);
     }
 
     #[test]
-    fn test_chunk_iter_single_byte() {
+    fn test_chunk_iterator_single_byte() {
         let data = b"x".to_vec();
-        let mut chunk_iter = ChunkIter::new(&data, 2);
+        let mut chunk_iter = ChunkIterator::new(&data, 2);
 
         assert_eq!(chunk_iter.next(), Some(&b"x"[..]));
         assert_eq!(chunk_iter.next(), None);
     }
 
     #[test]
-    fn test_chunk_iter_empty_slice() {
+    fn test_chunk_iterator_empty_slice() {
         let data: Vec<u8> = vec![];
-        let mut chunk_iter = ChunkIter::new(&data, 5);
+        let mut chunk_iter = ChunkIterator::new(&data, 5);
 
         assert_eq!(chunk_iter.next(), None);
     }
