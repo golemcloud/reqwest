@@ -210,32 +210,20 @@ impl Client {
             .set_authority(Some(url.authority()))
             .map_err(|e| failure_point("set_authority", e))?;
 
-        if let Some(body) = body {
+        if let Some(mut body) = body {
+            let body_bytes = body.buffer()?;
+            println!("Total body size: {} bytes", body_bytes.len());
+
             let request_body = request.body().map_err(|e| failure_point("body", e))?;
             let request_body_stream = request_body
                 .write()
                 .map_err(|e| failure_point("write", e))?;
-            body.write(|chunk| {
-                let mut remaining = chunk;
-                while !remaining.is_empty() {
-                    let n = request_body_stream.check_write()?;
-                    println!("Write capacity {} bytes", n);
 
-                    if n == 0 {
-                        println!("Stream has no capacity - wait for it to become writable");
-                        let pollable = request_body_stream.subscribe();
-                        pollable.block(); // Wait until stream is ready
-                        continue;
-                    }
+            // write the whole body in one go
+            if !body_bytes.is_empty() {
+                request_body_stream.write(body_bytes)?;
+            }
 
-                    let write_size = std::cmp::min(n, remaining.len() as u64);
-                    let (to_write, rest) = remaining.split_at(write_size as usize);
-                    request_body_stream.write(to_write)?;
-                    remaining = rest;
-                }
-
-                Ok(())
-            })?;
             drop(request_body_stream);
             types::OutgoingBody::finish(request_body, None)?;
         }
