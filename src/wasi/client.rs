@@ -237,14 +237,14 @@ impl Client {
         let future_incoming_response = outgoing_handler::handle(request, Some(options))?;
 
         if let Some((body, outgoing_body)) = maybe_outgoing_body {
-            let request_body_stream = outgoing_body
+            let outgoing_body_stream = outgoing_body
                 .write()
                 .map_err(|e| failure_point("write", e))?;
             body.write(|chunk| {
-                request_body_stream.blocking_write_and_flush(chunk)?;
+                outgoing_body_stream.blocking_write_and_flush(chunk)?;
                 Ok(())
             })?;
-            drop(request_body_stream);
+            drop(outgoing_body_stream);
             types::OutgoingBody::finish(outgoing_body, None)?;
         }
 
