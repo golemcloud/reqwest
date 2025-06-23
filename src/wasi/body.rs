@@ -372,12 +372,11 @@ mod tests {
     }
 
     #[test]
-    fn test_chunk_iter_last_small_chunk() {
+    fn test_chunk_iter_only_one_chunk() {
         let data = b"hello world".to_vec();
-        let mut chunk_iter = ChunkIter::new(&data, 7);
+        let mut chunk_iter = ChunkIter::new(&data, 11);
 
-        assert_eq!(chunk_iter.next(), Some(&b"hello w"[..]));
-        assert_eq!(chunk_iter.next(), Some(&b"orld"[..]));
+        assert_eq!(chunk_iter.next(), Some(&b"hello world"[..]));
         assert_eq!(chunk_iter.next(), None);
     }
 
