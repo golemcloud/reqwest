@@ -221,12 +221,17 @@ impl Client {
                     let n = request_body_stream.check_write()?;
                     println!("Write capacity {} bytes", n);
 
-                    if n != 0 {
-                        let write_size = std::cmp::min(n, remaining.len() as u64);
-                        let (to_write, rest) = remaining.split_at(write_size as usize);
-                        request_body_stream.write(to_write)?;
-                        remaining = rest;
+                    if n == 0 {
+                        println!("Stream has no capacity - wait for it to become writable");
+                        let pollable = request_body_stream.subscribe();
+                        pollable.block(); // Wait until stream is ready
+                        continue;
                     }
+
+                    let write_size = std::cmp::min(n, remaining.len() as u64);
+                    let (to_write, rest) = remaining.split_at(write_size as usize);
+                    request_body_stream.write(to_write)?;
+                    remaining = rest;
                 }
 
                 Ok(())
