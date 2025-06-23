@@ -172,17 +172,15 @@ impl Client {
     pub fn execute(&self, request: Request) -> Result<Response, crate::Error> {
         let mut header_key_values: Vec<(String, Vec<u8>)> = vec![];
         for (name, value) in self.inner.headers.iter() {
-            match value.to_str() {
-                Ok(value) => header_key_values.push((name.as_str().to_string(), value.into())),
-                Err(_) => {}
+            if let Ok(value) = value.to_str() {
+                header_key_values.push((name.as_str().to_string(), value.into()))
             }
         }
 
         let (method, url, headers, body, timeout, _version) = request.pieces();
         for (name, value) in headers.iter() {
-            match value.to_str() {
-                Ok(value) => header_key_values.push((name.as_str().to_string(), value.into())),
-                Err(_) => {}
+            if let Ok(value) = value.to_str() {
+                header_key_values.push((name.as_str().to_string(), value.into()))
             }
         }
 
@@ -210,24 +208,6 @@ impl Client {
             .set_authority(Some(url.authority()))
             .map_err(|e| failure_point("set_authority", e))?;
 
-        if let Some(mut body) = body {
-            let body_bytes = body.buffer()?;
-            println!("Total body size: {} bytes", body_bytes.len());
-
-            let request_body = request.body().map_err(|e| failure_point("body", e))?;
-            let request_body_stream = request_body
-                .write()
-                .map_err(|e| failure_point("write", e))?;
-
-            // write the whole body in one go
-            if !body_bytes.is_empty() {
-                request_body_stream.write(body_bytes)?;
-            }
-
-            drop(request_body_stream);
-            types::OutgoingBody::finish(request_body, None)?;
-        }
-
         let options = types::RequestOptions::new();
         options
             .set_connect_timeout(self.inner.connect_timeout.map(|d| d.as_nanos() as u64))
@@ -247,7 +227,26 @@ impl Client {
             )
             .map_err(|e| failure_point("set_between_bytes_timeout", e))?;
 
+        let maybe_outgoing_body = if let Some(body) = body {
+            let request_body = request.body().map_err(|e| failure_point("body", e))?;
+            Some((body, request_body))
+        } else {
+            None
+        };
+
         let future_incoming_response = outgoing_handler::handle(request, Some(options))?;
+
+        if let Some((body, outgoing_body)) = maybe_outgoing_body {
+            let request_body_stream = outgoing_body
+                .write()
+                .map_err(|e| failure_point("write", e))?;
+            body.write(|chunk| {
+                request_body_stream.blocking_write_and_flush(chunk)?;
+                Ok(())
+            })?;
+            drop(request_body_stream);
+            types::OutgoingBody::finish(outgoing_body, None)?;
+        }
 
         let receive_timeout = timeout.or(self.inner.first_byte_timeout);
         let incoming_response =
