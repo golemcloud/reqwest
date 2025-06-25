@@ -11,6 +11,33 @@ pub struct Body {
     kind: Option<Kind>,
 }
 
+struct ChunkIterator<'a> {
+    bytes: &'a [u8],
+    chunk_size: usize,
+}
+
+impl<'a> ChunkIterator<'a> {
+    fn new(bytes: &'a [u8], chunk_size: usize) -> Self {
+        ChunkIterator { bytes, chunk_size }
+    }
+}
+
+impl<'a> Iterator for ChunkIterator<'a> {
+    type Item = &'a [u8];
+
+    fn next(&mut self) -> Option<Self::Item> {
+        if self.bytes.is_empty() {
+            return None;
+        }
+
+        let chunk_size = std::cmp::min(self.chunk_size, self.bytes.len());
+        let (chunk, rest) = self.bytes.split_at(chunk_size);
+        self.bytes = rest;
+
+        Some(chunk)
+    }
+}
+
 impl Body {
     /// Instantiate a `Body` from a reader.
     ///
@@ -166,7 +193,7 @@ impl Body {
     ) -> Result<(), crate::Error> {
         match self.kind.take().expect("Body has already been extracted") {
             Kind::Reader(mut reader, _) => {
-                let mut buf = [0; 8 * 1024];
+                let mut buf = [0; 4 * 1024];
                 loop {
                     let len = reader.read(&mut buf).map_err(crate::error::builder)?;
                     if len == 0 {
@@ -176,7 +203,7 @@ impl Body {
                 }
                 Ok(())
             }
-            Kind::Bytes(bytes) => f(&bytes),
+            Kind::Bytes(bytes) => ChunkIterator::new(&bytes, 4 * 1024).try_for_each(&mut f),
             Kind::Incoming(ref body_stream) => {
                 let mut eof = false;
                 while !eof {
@@ -326,5 +353,47 @@ impl Read for Reader {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_chunk_iterator_regular_slices() {
+        let data = b"hello world".to_vec();
+        let mut chunk_iter = ChunkIterator::new(&data, 5);
+
+        assert_eq!(chunk_iter.next(), Some(&b"hello"[..]));
+        assert_eq!(chunk_iter.next(), Some(&b" worl"[..]));
+        assert_eq!(chunk_iter.next(), Some(&b"d"[..]));
+        assert_eq!(chunk_iter.next(), None);
+    }
+
+    #[test]
+    fn test_chunk_iterator_only_one_chunk() {
+        let data = b"hello world".to_vec();
+        let mut chunk_iter = ChunkIterator::new(&data, 11);
+
+        assert_eq!(chunk_iter.next(), Some(&b"hello world"[..]));
+        assert_eq!(chunk_iter.next(), None);
+    }
+
+    #[test]
+    fn test_chunk_iterator_single_byte() {
+        let data = b"x".to_vec();
+        let mut chunk_iter = ChunkIterator::new(&data, 2);
+
+        assert_eq!(chunk_iter.next(), Some(&b"x"[..]));
+        assert_eq!(chunk_iter.next(), None);
+    }
+
+    #[test]
+    fn test_chunk_iterator_empty_slice() {
+        let data: Vec<u8> = vec![];
+        let mut chunk_iter = ChunkIterator::new(&data, 5);
+
+        assert_eq!(chunk_iter.next(), None);
     }
 }
