@@ -262,7 +262,7 @@ mod util;
 mod wasi;
 
 pub use self::wasi::{get, Body, Client, ClientBuilder, Request, RequestBuilder, Response};
-pub use bindings::wasi::io::streams::InputStream;
+pub use bindings::wasi::io::streams::{InputStream, StreamError};
 
 #[cfg(feature = "multipart")]
 pub use self::wasi::multipart;
