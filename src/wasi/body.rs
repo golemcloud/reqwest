@@ -71,7 +71,7 @@ impl Body {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn new<R: Read + Send + 'static>(reader: R) -> Body {
+    pub fn new<R: Read + 'static>(reader: R) -> Body {
         Body {
             kind: Some(Kind::Reader(Box::from(reader), None)),
         }
@@ -91,7 +91,7 @@ impl Body {
     /// # Ok(())
     /// # }
     /// ```
-    pub fn sized<R: Read + Send + 'static>(reader: R, len: u64) -> Body {
+    pub fn sized<R: Read + 'static>(reader: R, len: u64) -> Body {
         Body {
             kind: Some(Kind::Reader(Box::from(reader), Some(len))),
         }
@@ -229,7 +229,7 @@ impl Body {
 }
 
 enum Kind {
-    Reader(Box<dyn Read + Send>, Option<u64>),
+    Reader(Box<dyn Read>, Option<u64>),
     Bytes(Bytes),
     Incoming(streams::InputStream),
 }
@@ -329,7 +329,7 @@ impl<'a> fmt::Debug for DebugLength<'a> {
 }
 
 pub(crate) enum Reader {
-    Reader(Box<dyn Read + Send>),
+    Reader(Box<dyn Read>),
     Bytes(Cursor<Bytes>),
     Wasi(streams::InputStream),
 }
