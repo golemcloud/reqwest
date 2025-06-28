@@ -217,14 +217,14 @@ impl Part {
     /// Adds a generic reader.
     ///
     /// Does not set filename or mime.
-    pub fn reader<T: Read + Send + 'static>(value: T) -> Part {
+    pub fn reader<T: Read + 'static>(value: T) -> Part {
         Part::new(Body::new(value))
     }
 
     /// Adds a generic reader with known length.
     ///
     /// Does not set filename or mime.
-    pub fn reader_with_length<T: Read + Send + 'static>(value: T, length: u64) -> Part {
+    pub fn reader_with_length<T: Read + 'static>(value: T, length: u64) -> Part {
         Part::new(Body::sized(value, length))
     }
 
@@ -312,7 +312,7 @@ impl PartProps for Part {
 
 pub(crate) struct Reader {
     form: Form,
-    active_reader: Option<Box<dyn Read + Send>>,
+    active_reader: Option<Box<dyn Read>>,
 }
 
 impl fmt::Debug for Reader {
