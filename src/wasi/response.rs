@@ -1,3 +1,4 @@
+use crate::Body;
 use bytes::Bytes;
 use encoding_rs::{Encoding, UTF_8};
 use http::header::CONTENT_LENGTH;
@@ -13,10 +14,9 @@ use std::io::Read;
 use std::net::SocketAddr;
 use url::Url;
 
-use crate::Body;
-
-use crate::bindings::wasi::http::*;
-use crate::bindings::wasi::io::streams::InputStream;
+use wasi::http::types::IncomingBody;
+use wasi::http::*;
+use wasi::io::streams::InputStream;
 
 /// A Response to a submitted `Request`.
 #[derive(Debug)]
@@ -26,10 +26,10 @@ pub struct Response {
     body: Option<Body>,
     #[allow(dead_code)]
     incoming_response: types::IncomingResponse,
-    #[allow(dead_code)]
-    incoming_response_body: types::IncomingBody,
     url: Url,
     extensions: Extensions,
+    #[cfg(feature = "async")]
+    reactor: wasi_async_runtime::Reactor,
 }
 
 impl Response {
@@ -38,17 +38,18 @@ impl Response {
         headers: HeaderMap,
         body: Body,
         incoming_response: types::IncomingResponse,
-        incoming_response_body: types::IncomingBody,
         url: Url,
+        #[cfg(feature = "async")] reactor: wasi_async_runtime::Reactor,
     ) -> Response {
         Response {
             status,
             headers,
             body: Some(body),
             incoming_response,
-            incoming_response_body,
             url,
             extensions: Extensions::default(),
+            #[cfg(feature = "async")]
+            reactor,
         }
     }
 
@@ -72,58 +73,12 @@ impl Response {
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// Checking for specific status codes:
-    ///
-    /// ```rust
-    /// use reqwest::blocking::Client;
-    /// use reqwest::StatusCode;
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let client = Client::new();
-    ///
-    /// let resp = client.post("http://httpbin.org/post")
-    ///     .body("possibly too large")
-    ///     .send()?;
-    ///
-    /// match resp.status() {
-    ///     StatusCode::OK => println!("success!"),
-    ///     StatusCode::PAYLOAD_TOO_LARGE => {
-    ///         println!("Request payload is too large!");
-    ///     }
-    ///     s => println!("Received response status: {:?}", s),
-    /// };
-    /// # Ok(())
-    /// # }
-    /// ```
     #[inline]
     pub fn status(&self) -> StatusCode {
         self.status
     }
 
     /// Get the `Headers` of this `Response`.
-    ///
-    /// # Example
-    ///
-    /// Saving an etag when caching a file:
-    ///
-    /// ```
-    /// use reqwest::blocking::Client;
-    /// use reqwest::header::ETAG;
-    ///
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let client = Client::new();
-    ///
-    /// let mut resp = client.get("http://httpbin.org/cache").send()?;
-    /// if resp.status().is_success() {
-    ///     if let Some(etag) = resp.headers().get(ETAG) {
-    ///         std::fs::write("etag", etag.as_bytes());
-    ///     }
-    ///     let mut file = std::fs::File::create("file")?;
-    ///     resp.copy_to(&mut file)?;
-    /// }
-    /// # Ok(())
-    /// # }
-    /// ```
     #[inline]
     pub fn headers(&self) -> &HeaderMap {
         &self.headers
@@ -142,32 +97,12 @@ impl Response {
     }
 
     /// Get the final `Url` of this `Response`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let resp = reqwest::blocking::get("http://httpbin.org/redirect/1")?;
-    /// assert_eq!(resp.url().as_str(), "http://httpbin.org/get");
-    /// # Ok(())
-    /// # }
-    /// ```
     #[inline]
     pub fn url(&self) -> &Url {
         &self.url
     }
 
     /// Get the remote address used to get this `Response`.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let resp = reqwest::blocking::get("http://httpbin.org/redirect/1")?;
-    /// println!("httpbin.org address: {:?}", resp.remote_addr());
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn remote_addr(&self) -> Option<SocketAddr> {
         None
     }
@@ -201,30 +136,6 @@ impl Response {
     /// # Optional
     ///
     /// This requires the optional `json` feature enabled.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// # extern crate reqwest;
-    /// # extern crate serde;
-    /// #
-    /// # use reqwest::Error;
-    /// # use serde::Deserialize;
-    /// #
-    /// // This `derive` requires the `serde` dependency.
-    /// #[derive(Deserialize)]
-    /// struct Ip {
-    ///     origin: String,
-    /// }
-    ///
-    /// # fn run() -> Result<(), Error> {
-    /// let json: Ip = reqwest::blocking::get("http://httpbin.org/ip")?.json()?;
-    /// # Ok(())
-    /// # }
-    /// #
-    /// # fn main() { }
-    /// ```
-    ///
     /// # Errors
     ///
     /// This method fails whenever the response body is not in JSON format
@@ -233,32 +144,60 @@ impl Response {
     ///
     /// [`serde_json::from_reader`]: https://docs.serde.rs/serde_json/fn.from_reader.html
     #[cfg(feature = "json")]
+    #[cfg(not(feature = "async"))]
     #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
     pub fn json<T: DeserializeOwned>(self) -> crate::Result<T> {
         let full = self.bytes()?;
         serde_json::from_slice(&full).map_err(crate::error::decode)
     }
 
+    /// Try and deserialize the response body as JSON using `serde`.
+    ///
+    /// # Optional
+    ///
+    /// This requires the optional `json` feature enabled.
+    /// # Errors
+    ///
+    /// This method fails whenever the response body is not in JSON format
+    /// or it cannot be properly deserialized to target type `T`. For more
+    /// details please see [`serde_json::from_reader`].
+    ///
+    /// [`serde_json::from_reader`]: https://docs.serde.rs/serde_json/fn.from_reader.html
+    #[cfg(feature = "json")]
+    #[cfg(feature = "async")]
+    #[cfg_attr(docsrs, doc(cfg(feature = "json")))]
+    pub async fn json<T: DeserializeOwned>(self) -> crate::Result<T> {
+        let full = self.bytes().await?;
+        serde_json::from_slice(&full).map_err(crate::error::decode)
+    }
+
     /// Get the full response body as `Bytes`.
-    ///
-    /// # Example
-    ///
-    /// ```
-    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
-    /// let bytes = reqwest::blocking::get("http://httpbin.org/ip")?.bytes()?;
-    ///
-    /// println!("bytes: {:?}", bytes);
-    /// # Ok(())
-    /// # }
-    /// ```
+    #[cfg(not(feature = "async"))]
     pub fn bytes(mut self) -> crate::Result<Bytes> {
         let bytes: Bytes = Bytes::copy_from_slice(self.body.take().unwrap().buffer()?);
         Ok(bytes)
     }
 
+    /// Get the full response body as `Bytes`.
+    #[cfg(feature = "async")]
+    pub async fn bytes(mut self) -> crate::Result<Bytes> {
+        let bytes: Bytes = Bytes::copy_from_slice(self.body.take().unwrap().buffer().await?);
+        Ok(bytes)
+    }
+
+    /// Gets an async iterator yielding the response body in chunks.
+    #[cfg(feature = "async")]
+    pub fn async_chunks(
+        mut self,
+    ) -> impl async_iterator::Iterator<Item = Result<Vec<u8>, crate::Error>> {
+        let sync_reader = self.body.take().unwrap().into_reader();
+        let async_reader = sync_reader.into_async(self.reactor.clone());
+        async_reader
+    }
+
     /// Gets the underlying WASI response body stream. If the body was already consumed and/or buffered,
     /// it fails with a panic.
-    pub fn get_raw_input_stream(&mut self) -> InputStream {
+    pub fn get_raw_input_stream(&mut self) -> (InputStream, IncomingBody) {
         let body = self.body.take().unwrap();
         body.into_raw_input_stream()
     }
@@ -269,18 +208,20 @@ impl Response {
     /// and with malformed sequences replaced with the REPLACEMENT CHARACTER.
     /// Encoding is determined from the `charset` parameter of `Content-Type` header,
     /// and defaults to `utf-8` if not presented.
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # extern crate reqwest;
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let content = reqwest::blocking::get("http://httpbin.org/range/26")?.text()?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    #[cfg(not(feature = "async"))]
     pub fn text(self) -> crate::Result<String> {
         self.text_with_charset("utf-8")
+    }
+
+    /// Get the response text.
+    ///
+    /// This method decodes the response body with BOM sniffing
+    /// and with malformed sequences replaced with the REPLACEMENT CHARACTER.
+    /// Encoding is determined from the `charset` parameter of `Content-Type` header,
+    /// and defaults to `utf-8` if not presented.
+    #[cfg(feature = "async")]
+    pub async fn text(self) -> crate::Result<String> {
+        self.text_with_charset("utf-8").await
     }
 
     /// Get the response text given a specific encoding.
@@ -292,17 +233,7 @@ impl Response {
     /// about the possible encoding name, please go to [`encoding_rs`] docs.
     ///
     /// [`encoding_rs`]: https://docs.rs/encoding_rs/0.8/encoding_rs/#relationship-with-windows-code-pages
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # extern crate reqwest;
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let content = reqwest::blocking::get("http://httpbin.org/range/26")?
-    ///     .text_with_charset("utf-8")?;
-    /// # Ok(())
-    /// # }
-    /// ```
+    #[cfg(not(feature = "async"))]
     pub fn text_with_charset(self, default_encoding: &str) -> crate::Result<String> {
         let content_type = self
             .headers()
@@ -328,6 +259,41 @@ impl Response {
         }
     }
 
+    /// Get the response text given a specific encoding.
+    ///
+    /// This method decodes the response body with BOM sniffing
+    /// and with malformed sequences replaced with the REPLACEMENT CHARACTER.
+    /// You can provide a default encoding for decoding the raw message, while the
+    /// `charset` parameter of `Content-Type` header is still prioritized. For more information
+    /// about the possible encoding name, please go to [`encoding_rs`] docs.
+    ///
+    /// [`encoding_rs`]: https://docs.rs/encoding_rs/0.8/encoding_rs/#relationship-with-windows-code-pages
+    #[cfg(feature = "async")]
+    pub async fn text_with_charset(self, default_encoding: &str) -> crate::Result<String> {
+        let content_type = self
+            .headers()
+            .get(crate::header::CONTENT_TYPE)
+            .and_then(|value| value.to_str().ok())
+            .and_then(|value| value.parse::<Mime>().ok());
+        let encoding_name = content_type
+            .as_ref()
+            .and_then(|mime| mime.get_param("charset").map(|charset| charset.as_str()))
+            .unwrap_or(default_encoding);
+        let encoding = Encoding::for_label(encoding_name.as_bytes()).unwrap_or(UTF_8);
+
+        let full = self.bytes().await?;
+
+        let (text, _, _) = encoding.decode(&full);
+        if let Cow::Owned(s) = text {
+            return Ok(s);
+        }
+        unsafe {
+            // decoding returned Cow::Borrowed, meaning these bytes
+            // are already valid utf8
+            Ok(String::from_utf8_unchecked(full.to_vec()))
+        }
+    }
+
     /// Copy the response body into a writer.
     ///
     /// This function internally uses [`std::io::copy`] and hence will continuously read data from
@@ -336,18 +302,6 @@ impl Response {
     /// On success, the total number of bytes that were copied to `writer` is returned.
     ///
     /// [`std::io::copy`]: https://doc.rust-lang.org/std/io/fn.copy.html
-    ///
-    /// # Example
-    ///
-    /// ```rust
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let mut resp = reqwest::blocking::get("http://httpbin.org/range/5")?;
-    /// let mut buf: Vec<u8> = vec![];
-    /// resp.copy_to(&mut buf)?;
-    /// assert_eq!(b"abcde", buf.as_slice());
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn copy_to<W: ?Sized>(&mut self, w: &mut W) -> crate::Result<u64>
     where
         W: io::Write,
@@ -356,21 +310,6 @@ impl Response {
     }
 
     /// Turn a response into an error if the server returned an error.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # extern crate reqwest;
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let res = reqwest::blocking::get("http://httpbin.org/status/400")?
-    ///     .error_for_status();
-    /// if let Err(err) = res {
-    ///     assert_eq!(err.status(), Some(reqwest::StatusCode::BAD_REQUEST));
-    /// }
-    /// # Ok(())
-    /// # }
-    /// # fn main() {}
-    /// ```
     pub fn error_for_status(self) -> crate::Result<Self> {
         let status = self.status();
         if status.is_client_error() || status.is_server_error() {
@@ -381,21 +320,6 @@ impl Response {
     }
 
     /// Turn a reference to a response into an error if the server returned an error.
-    ///
-    /// # Example
-    ///
-    /// ```rust,no_run
-    /// # extern crate reqwest;
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
-    /// let res = reqwest::blocking::get("http://httpbin.org/status/400")?;
-    /// let res = res.error_for_status_ref();
-    /// if let Err(err) = res {
-    ///     assert_eq!(err.status(), Some(reqwest::StatusCode::BAD_REQUEST));
-    /// }
-    /// # Ok(())
-    /// # }
-    /// # fn main() {}
-    /// ```
     pub fn error_for_status_ref(&self) -> crate::Result<&Self> {
         let status = self.status();
         if status.is_client_error() || status.is_server_error() {

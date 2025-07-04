@@ -1,18 +1,18 @@
 use http::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use http::{HeaderName, Method, StatusCode};
 use std::convert::{TryFrom, TryInto};
-use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
 
+use super::conversions::{encode_method, failure_point};
 use super::request::{Request, RequestBuilder};
 use super::response::Response;
 use crate::error::Kind;
 use crate::{Body, IntoUrl};
 
-use crate::bindings::wasi::clocks::*;
-use crate::bindings::wasi::http::*;
-use crate::bindings::wasi::io::*;
+use wasi::clocks::*;
+use wasi::http::*;
+use wasi::io::*;
 
 #[derive(Debug)]
 struct Config {
@@ -196,7 +196,7 @@ impl Client {
             None => url.path().to_string(),
         };
         request
-            .set_method(&method.into())
+            .set_method(&encode_method(method))
             .map_err(|e| failure_point("set_method", e))?;
         request
             .set_path_with_query(Some(&path_with_query))
@@ -265,14 +265,13 @@ impl Client {
         let response_body_stream = response_body
             .stream()
             .map_err(|e| failure_point("stream", e))?;
-        let body: Body = response_body_stream.into();
+        let body: Body = Body::from_incoming(response_body_stream, response_body);
 
         Ok(Response::new(
             status_code,
             response_headers,
             body,
             incoming_response,
-            response_body,
             url,
         ))
     }
@@ -444,73 +443,4 @@ impl ClientBuilder {
         self.config.connect_timeout = timeout.into();
         self
     }
-}
-
-impl From<Method> for types::Method {
-    fn from(value: Method) -> types::Method {
-        if value == Method::GET {
-            types::Method::Get
-        } else if value == Method::POST {
-            types::Method::Post
-        } else if value == Method::PUT {
-            types::Method::Put
-        } else if value == Method::DELETE {
-            types::Method::Delete
-        } else if value == Method::HEAD {
-            types::Method::Head
-        } else if value == Method::OPTIONS {
-            types::Method::Options
-        } else if value == Method::CONNECT {
-            types::Method::Connect
-        } else if value == Method::PATCH {
-            types::Method::Patch
-        } else if value == Method::TRACE {
-            types::Method::Trace
-        } else {
-            types::Method::Other(value.as_str().to_string())
-        }
-    }
-}
-
-impl From<types::ErrorCode> for crate::Error {
-    fn from(value: types::ErrorCode) -> Self {
-        crate::Error::new(
-            Kind::Request,
-            Some(std::io::Error::new(
-                ErrorKind::Other,
-                format!("{:?}", value),
-            )),
-        )
-    }
-}
-
-impl From<streams::StreamError> for crate::Error {
-    fn from(value: streams::StreamError) -> Self {
-        crate::Error::new(
-            Kind::Request,
-            Some(std::io::Error::new(
-                ErrorKind::Other,
-                format!("{:?}", value),
-            )),
-        )
-    }
-}
-
-impl From<types::HeaderError> for crate::Error {
-    fn from(value: types::HeaderError) -> Self {
-        crate::Error::new(
-            Kind::Request,
-            Some(std::io::Error::new(
-                ErrorKind::Other,
-                format!("{:?}", value),
-            )),
-        )
-    }
-}
-
-pub(crate) fn failure_point(s: &str, _: ()) -> crate::Error {
-    crate::Error::new(
-        Kind::Request,
-        Some(std::io::Error::new(ErrorKind::Other, s)),
-    )
 }

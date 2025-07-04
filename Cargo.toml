@@ -18,34 +18,32 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs", "--cfg", "reqwest_unstable"]
 targets = ["x86_64-unknown-linux-gnu", "wasm32-unknown-unknown"]
 
-[package.metadata.playground]
-features = ["blocking", "cookies", "json", "multipart"]
-
 [features]
-default = ["charset"]
+default = ["charset", "async"]
 
 # Enables native-tls specific functionality not available by default.
-
 charset = ["dep:encoding_rs"]
-
 json = ["dep:serde_json"]
-
 multipart = ["dep:mime_guess", "dep:rand"]
+async = ["dep:wasi-async-runtime", "dep:async-iterator", "dep:futures-concurrency", "dep:futures"]
 
 [dependencies]
 base64 = "0.22"
 http = "1"
 url = "2.4"
 bytes = "1.2"
+mime = "0.3.16"
+percent-encoding = "2.1"
 serde = "1.0"
 serde_urlencoded = "0.7.1"
-tower-service = "0.3"
-futures-core = { version = "0.3.28", default-features = false }
-futures-util = { version = "0.3.28", default-features = false }
-sync_wrapper = { version = "1.0", features = ["futures"] }
-
-
+wasi = "0.12.1+wasi-0.2.0"
 # Optional deps...
+
+## async
+async-iterator = { version = "2.3.0", optional = true }
+futures = { version = "0.3.31", optional = true }
+futures-concurrency = { version = "7.6.3", optional = true }
+wasi-async-runtime = { version = "0.1.2", optional = true }
 
 ## json
 serde_json = { version = "1.0", optional = true }
@@ -53,25 +51,7 @@ serde_json = { version = "1.0", optional = true }
 mime_guess = { version = "2.0", default-features = false, optional = true }
 rand = { version = "0.9.1", optional = true }
 
-wit-bindgen-rt = { version = "0.41.0", features = ["bitflags"] }
 encoding_rs = { version = "0.8", optional = true }
-mime = "0.3.16"
-percent-encoding = "2.1"
-
-[package.metadata.component]
-package = "reqwest:wasi"
-
-[package.metadata.component.target]
-path = "wit"
-
-[package.metadata.component.target.dependencies]
-"wasi:clocks" = { path = "wit/deps/clocks" }
-"wasi:http" = { path = "wit/deps/http" }
-"wasi:io" = { path = "wit/deps/io" }
-"wasi:random" = { path = "wit/deps/random" }
-"wasi:cli" = { path = "wit/deps/cli" }
-"wasi:filesystem" = { path = "wit/deps/filesystem" }
-"wasi:sockets" = { path = "wit/deps/sockets" }
 
 #[lib]
 #crate-type = ["cdylib"]
@@ -83,70 +63,3 @@ libc = "0"
 
 [lints.rust]
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(reqwest_unstable)'] }
-
-[[example]]
-name = "blocking"
-path = "examples/blocking.rs"
-required-features = ["blocking"]
-
-[[example]]
-name = "json_dynamic"
-path = "examples/json_dynamic.rs"
-required-features = ["json"]
-
-[[example]]
-name = "json_typed"
-path = "examples/json_typed.rs"
-required-features = ["json"]
-
-[[example]]
-name = "tor_socks"
-path = "examples/tor_socks.rs"
-required-features = ["socks"]
-
-[[example]]
-name = "form"
-path = "examples/form.rs"
-
-[[example]]
-name = "simple"
-path = "examples/simple.rs"
-
-[[example]]
-name = "connect_via_lower_priority_tokio_runtime"
-path = "examples/connect_via_lower_priority_tokio_runtime.rs"
-
-[[test]]
-name = "blocking"
-path = "tests/blocking.rs"
-required-features = ["blocking"]
-
-[[test]]
-name = "cookie"
-path = "tests/cookie.rs"
-required-features = ["cookies"]
-
-[[test]]
-name = "gzip"
-path = "tests/gzip.rs"
-required-features = ["gzip", "stream"]
-
-[[test]]
-name = "brotli"
-path = "tests/brotli.rs"
-required-features = ["brotli", "stream"]
-
-[[test]]
-name = "zstd"
-path = "tests/zstd.rs"
-required-features = ["zstd", "stream"]
-
-[[test]]
-name = "deflate"
-path = "tests/deflate.rs"
-required-features = ["deflate", "stream"]
-
-[[test]]
-name = "multipart"
-path = "tests/multipart.rs"
-required-features = ["multipart"]

@@ -178,15 +178,27 @@ impl RequestBuilder {
     ///
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
+    #[cfg(not(feature = "async"))]
     pub fn send(self) -> crate::Result<super::Response> {
         self.client.execute(self.request?)
+    }
+
+    /// Constructs the Request and sends it the target URL, returning a Response.
+    ///
+    /// # Errors
+    ///
+    /// This method fails if there was an error while sending request,
+    /// redirect loop was detected or redirect limit was exhausted.
+    #[cfg(feature = "async")]
+    pub async fn send(self) -> crate::Result<super::Response> {
+        self.client.execute(self.request?).await
     }
 
     /// Assemble a builder starting from an existing `Client` and a `Request`.
     pub fn from_parts(client: Client, request: Request) -> RequestBuilder {
         RequestBuilder {
             client,
-            request: crate::Result::Ok(request),
+            request: Ok(request),
         }
     }
 
@@ -236,7 +248,7 @@ impl RequestBuilder {
     /// Add a set of Headers to the existing ones on this Request.
     ///
     /// The headers will be merged in to any already set.
-    pub fn headers(mut self, headers: crate::header::HeaderMap) -> RequestBuilder {
+    pub fn headers(mut self, headers: HeaderMap) -> RequestBuilder {
         if let Ok(ref mut req) = self.request {
             crate::util::replace_headers(req.headers_mut(), headers);
         }
@@ -244,19 +256,6 @@ impl RequestBuilder {
     }
 
     /// Enable HTTP basic authentication.
-    ///
-    /// ```rust
-    /// # use reqwest::Error;
-    ///
-    /// # async fn run() -> Result<(), Error> {
-    /// let client = reqwest::Client::new();
-    /// let resp = client.delete("http://httpbin.org/delete")
-    ///     .basic_auth("admin", Some("good password"))
-    ///     .send()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn basic_auth<U, P>(self, username: U, password: Option<P>) -> RequestBuilder
     where
         U: fmt::Display,
@@ -296,24 +295,6 @@ impl RequestBuilder {
     }
 
     /// Sends a multipart/form-data body.
-    ///
-    /// ```
-    /// # use reqwest::Error;
-    ///
-    /// # async fn run() -> Result<(), Error> {
-    /// let client = reqwest::Client::new();
-    /// let form = reqwest::multipart::Form::new()
-    ///     .text("key3", "value3")
-    ///     .text("key4", "value4");
-    ///
-    ///
-    /// let response = client.post("your url")
-    ///     .multipart(form)
-    ///     .send()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     #[cfg(feature = "multipart")]
     #[cfg_attr(docsrs, doc(cfg(feature = "multipart")))]
     pub fn multipart(self, mut multipart: crate::multipart::Form) -> RequestBuilder {
@@ -383,23 +364,6 @@ impl RequestBuilder {
     /// Sets the body to the url encoded serialization of the passed value,
     /// and also sets the `Content-Type: application/x-www-form-urlencoded`
     /// header.
-    ///
-    /// ```rust
-    /// # use reqwest::Error;
-    /// # use std::collections::HashMap;
-    /// #
-    /// # async fn run() -> Result<(), Error> {
-    /// let mut params = HashMap::new();
-    /// params.insert("lang", "rust");
-    ///
-    /// let client = reqwest::Client::new();
-    /// let res = client.post("http://httpbin.org")
-    ///     .form(&params)
-    ///     .send()
-    ///     .await?;
-    /// # Ok(())
-    /// # }
-    /// ```
     ///
     /// # Errors
     ///
@@ -490,20 +454,6 @@ impl RequestBuilder {
     /// `None` is returned if the RequestBuilder can not be cloned,
     /// i.e. if the request body is a stream.
     ///
-    /// # Examples
-    ///
-    /// ```
-    /// # use reqwest::Error;
-    /// #
-    /// # fn run() -> Result<(), Error> {
-    /// let client = reqwest::Client::new();
-    /// let builder = client.post("http://httpbin.org/post")
-    ///     .body("from a &str!");
-    /// let clone = builder.try_clone();
-    /// assert!(clone.is_some());
-    /// # Ok(())
-    /// # }
-    /// ```
     pub fn try_clone(&self) -> Option<RequestBuilder> {
         self.request
             .as_ref()

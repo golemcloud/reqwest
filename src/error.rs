@@ -199,6 +199,7 @@ impl StdError for Error {
 }
 
 #[derive(Debug)]
+#[allow(dead_code)]
 pub(crate) enum Kind {
     Builder,
     Request,
@@ -215,6 +216,7 @@ pub(crate) fn builder<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Builder, Some(e))
 }
 
+#[allow(dead_code)]
 pub(crate) fn body<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Body, Some(e))
 }
@@ -223,10 +225,12 @@ pub(crate) fn decode<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Decode, Some(e))
 }
 
+#[allow(dead_code)]
 pub(crate) fn request<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Request, Some(e))
 }
 
+#[allow(dead_code)]
 pub(crate) fn redirect<E: Into<BoxError>>(e: E, url: Url) -> Error {
     Error::new(Kind::Redirect, Some(e)).with_url(url)
 }
@@ -239,10 +243,12 @@ pub(crate) fn url_bad_scheme(url: Url) -> Error {
     Error::new(Kind::Builder, Some(BadScheme)).with_url(url)
 }
 
+#[allow(dead_code)]
 pub(crate) fn url_invalid_uri(url: Url) -> Error {
     Error::new(Kind::Builder, Some("Parsed Url is not a valid Uri")).with_url(url)
 }
 
+#[allow(dead_code)]
 pub(crate) fn upgrade<E: Into<BoxError>>(e: E) -> Error {
     Error::new(Kind::Upgrade, Some(e))
 }

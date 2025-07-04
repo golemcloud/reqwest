@@ -1,9 +1,12 @@
-use crate::bindings::wasi::io::streams::InputStream;
-use crate::bindings::wasi::io::*;
+use crate::Error;
 use bytes::Bytes;
+use futures::StreamExt;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Cursor, Read};
+use wasi::http::types::IncomingBody;
+use wasi::io::streams::InputStream;
+use wasi::io::*;
 
 /// An asynchronous request body.
 #[derive(Debug)]
@@ -11,17 +14,20 @@ pub struct Body {
     kind: Option<Kind>,
 }
 
+#[allow(dead_code)]
 struct ChunkIterator<'a> {
     bytes: &'a [u8],
     chunk_size: usize,
 }
 
+#[allow(dead_code)]
 impl<'a> ChunkIterator<'a> {
     fn new(bytes: &'a [u8], chunk_size: usize) -> Self {
         ChunkIterator { bytes, chunk_size }
     }
 }
 
+#[allow(dead_code)]
 impl<'a> Iterator for ChunkIterator<'a> {
     type Item = &'a [u8];
 
@@ -51,8 +57,8 @@ impl Body {
     ///
     /// ```rust
     /// # use std::fs::File;
-    /// # use reqwest::blocking::Body;
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
+    /// # use reqwest::Body;
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let file = File::open("national_secrets.txt")?;
     /// let body = Body::new(file);
     /// # Ok(())
@@ -64,8 +70,8 @@ impl Body {
     /// it can be reused.
     ///
     /// ```rust
-    /// # use reqwest::blocking::Body;
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
+    /// # use reqwest::Body;
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let s = "A stringy body";
     /// let body = Body::from(s);
     /// # Ok(())
@@ -83,8 +89,8 @@ impl Body {
     ///
     /// ```rust
     /// # use std::fs::File;
-    /// # use reqwest::blocking::Body;
-    /// # fn run() -> Result<(), Box<std::error::Error>> {
+    /// # use reqwest::Body;
+    /// # fn run() -> Result<(), Box<dyn std::error::Error>> {
     /// let file = File::open("a_large_file.txt")?;
     /// let file_size = file.metadata()?.len();
     /// let body = Body::sized(file, file_size);
@@ -97,13 +103,26 @@ impl Body {
         }
     }
 
+    /// Creates a Body that consumes the given stream
+    #[cfg(feature = "async")]
+    pub fn from_stream<S>(stream: S) -> Body
+    where
+        S: futures::stream::Stream<Item = Result<Vec<u8>, Error>> + 'static,
+    {
+        Body {
+            kind: Some(Kind::Stream(Box::pin(stream))),
+        }
+    }
+
     /// Returns the body as a byte slice if the body is already buffered in
     /// memory. For streamed requests this method returns `None`.
     pub fn as_bytes(&self) -> Option<&[u8]> {
         match self.kind {
             Some(Kind::Reader(_, _)) => None,
             Some(Kind::Bytes(ref bytes)) => Some(bytes.as_ref()),
-            Some(Kind::Incoming(_)) => None,
+            Some(Kind::Incoming { .. }) => None,
+            #[cfg(feature = "async")]
+            Some(Kind::Stream(_)) => None,
             None => None,
         }
     }
@@ -114,7 +133,8 @@ impl Body {
     ///
     /// Be aware that for large requests this method is expensive
     /// and may cause your program to run out of memory.
-    pub fn buffer(&mut self) -> Result<&[u8], crate::Error> {
+    #[cfg(not(feature = "async"))]
+    pub fn buffer(&mut self) -> Result<&[u8], Error> {
         match self.kind {
             Some(Kind::Reader(ref mut reader, maybe_len)) => {
                 let mut bytes = if let Some(len) = maybe_len {
@@ -127,11 +147,11 @@ impl Body {
                 self.buffer()
             }
             Some(Kind::Bytes(ref bytes)) => Ok(bytes.as_ref()),
-            Some(Kind::Incoming(ref body_stream)) => {
+            Some(Kind::Incoming { ref stream, .. }) => {
                 let mut body = Vec::new();
                 let mut eof = false;
                 while !eof {
-                    match body_stream.blocking_read(u64::MAX) {
+                    match stream.blocking_read(u64::MAX) {
                         Ok(mut body_chunk) => {
                             body.append(&mut body_chunk);
                         }
@@ -139,7 +159,7 @@ impl Body {
                             eof = true;
                         }
                         Err(streams::StreamError::LastOperationFailed(err)) => {
-                            return Err(crate::Error::new(
+                            return Err(Error::new(
                                 crate::error::Kind::Body,
                                 Some(err.to_debug_string()),
                             ));
@@ -153,11 +173,94 @@ impl Body {
         }
     }
 
-    pub(crate) fn into_raw_input_stream(mut self) -> InputStream {
+    /// Converts streamed requests to their buffered equivalent and
+    /// returns a reference to the buffer. If the request is already
+    /// buffered, this has no effect.
+    ///
+    /// Be aware that for large requests this method is expensive
+    /// and may cause your program to run out of memory.
+    #[cfg(feature = "async")]
+    pub async fn buffer(&mut self) -> Result<&[u8], Error> {
+        match self.kind {
+            Some(Kind::Reader(ref mut reader, maybe_len)) => {
+                let mut bytes = if let Some(len) = maybe_len {
+                    Vec::with_capacity(len as usize)
+                } else {
+                    Vec::new()
+                };
+                io::copy(reader, &mut bytes).map_err(crate::error::builder)?;
+                self.kind = Some(Kind::Bytes(bytes.into()));
+                let Some(Kind::Bytes(bytes)) = &self.kind else {
+                    unreachable!()
+                };
+                Ok(bytes.as_ref())
+            }
+            Some(Kind::Bytes(ref bytes)) => Ok(bytes.as_ref()),
+            Some(Kind::Incoming { ref stream, .. }) => {
+                let mut body = Vec::new();
+                let mut eof = false;
+                while !eof {
+                    match stream.blocking_read(u64::MAX) {
+                        Ok(mut body_chunk) => {
+                            body.append(&mut body_chunk);
+                        }
+                        Err(streams::StreamError::Closed) => {
+                            eof = true;
+                        }
+                        Err(streams::StreamError::LastOperationFailed(err)) => {
+                            return Err(Error::new(
+                                crate::error::Kind::Body,
+                                Some(err.to_debug_string()),
+                            ));
+                        }
+                    }
+                }
+                self.kind = Some(Kind::Bytes(body.into()));
+                let Some(Kind::Bytes(bytes)) = &self.kind else {
+                    unreachable!()
+                };
+                Ok(bytes.as_ref())
+            }
+            Some(Kind::Stream(ref mut stream)) => {
+                use futures::StreamExt;
+
+                let mut bytes = Vec::new();
+
+                while let Some(chunk) = stream.next().await {
+                    match chunk {
+                        Ok(data) => bytes.extend(data),
+                        Err(err) => return Err(err),
+                    }
+                }
+
+                self.kind = Some(Kind::Bytes(Bytes::from(bytes)));
+                let Some(Kind::Bytes(bytes)) = &self.kind else {
+                    unreachable!()
+                };
+                Ok(bytes.as_ref())
+            }
+            None => panic!("Body has already been extracted"),
+        }
+    }
+
+    pub(crate) fn from_incoming(stream: InputStream, incoming_body: IncomingBody) -> Body {
+        Body {
+            kind: Some(Kind::Incoming {
+                stream,
+                incoming_body,
+            }),
+        }
+    }
+
+    pub(crate) fn into_raw_input_stream(mut self) -> (InputStream, IncomingBody) {
         match self.kind.take() {
             Some(Kind::Reader(_, _)) => panic!("Body is not backed up by an input stream"),
             Some(Kind::Bytes(_)) => panic!("Body is not backed up by an input stream"),
-            Some(Kind::Incoming(handle)) => handle,
+            Some(Kind::Incoming {
+                stream,
+                incoming_body,
+            }) => (stream, incoming_body),
+            Some(Kind::Stream(_)) => panic!("Body is not backed up by an input stream"),
             None => panic!("Body has already been extracted"),
         }
     }
@@ -166,8 +269,30 @@ impl Body {
         match self.kind.take() {
             Some(Kind::Reader(r, _)) => Reader::Reader(r),
             Some(Kind::Bytes(b)) => Reader::Bytes(Cursor::new(b)),
-            Some(Kind::Incoming(handle)) => Reader::Wasi(handle),
+            Some(Kind::Incoming {
+                stream,
+                incoming_body,
+            }) => Reader::Wasi {
+                body_stream: stream,
+                _incoming_body: incoming_body,
+            },
+            #[cfg(feature = "async")]
+            Some(Kind::Stream(_)) => {
+                panic!("Stream cannot be converted to Reader, use into_async_reader instead")
+            }
             None => panic!("Body has already been extracted"),
+        }
+    }
+
+    #[cfg(feature = "async")]
+    pub(crate) fn into_async_reader(mut self, reactor: wasi_async_runtime::Reactor) -> AsyncReader {
+        if matches!(self.kind, Some(Kind::Stream(_))) {
+            match self.kind.take() {
+                Some(Kind::Stream(stream)) => AsyncReader::StreamBased { stream },
+                _ => unreachable!(),
+            }
+        } else {
+            self.into_reader().into_async(reactor)
         }
     }
 
@@ -179,18 +304,22 @@ impl Body {
             .map(|kind| Body { kind: Some(kind) })
     }
 
+    #[allow(dead_code)]
     pub(crate) fn len(&self) -> Option<u64> {
         match self.kind.as_ref()? {
             Kind::Reader(_, len) => *len,
             Kind::Bytes(bytes) => Some(bytes.len() as u64),
-            Kind::Incoming(_) => None,
+            Kind::Incoming { .. } => None,
+            #[cfg(feature = "async")]
+            Kind::Stream(_) => None,
         }
     }
 
+    #[cfg(not(feature = "async"))]
     pub(crate) fn write(
         mut self,
-        mut f: impl FnMut(&[u8]) -> Result<(), crate::Error>,
-    ) -> Result<(), crate::Error> {
+        mut f: impl FnMut(&[u8]) -> Result<(), Error>,
+    ) -> Result<(), Error> {
         match self.kind.take().expect("Body has already been extracted") {
             Kind::Reader(mut reader, _) => {
                 let mut buf = [0; 4 * 1024];
@@ -204,10 +333,10 @@ impl Body {
                 Ok(())
             }
             Kind::Bytes(bytes) => ChunkIterator::new(&bytes, 4 * 1024).try_for_each(&mut f),
-            Kind::Incoming(ref body_stream) => {
+            Kind::Incoming { ref stream, .. } => {
                 let mut eof = false;
                 while !eof {
-                    match body_stream.blocking_read(u64::MAX) {
+                    match stream.blocking_read(u64::MAX) {
                         Ok(body_chunk) => {
                             f(&body_chunk)?;
                         }
@@ -215,7 +344,7 @@ impl Body {
                             eof = true;
                         }
                         Err(streams::StreamError::LastOperationFailed(err)) => {
-                            return Err(crate::Error::new(
+                            return Err(Error::new(
                                 crate::error::Kind::Body,
                                 Some(err.to_debug_string()),
                             ));
@@ -226,12 +355,35 @@ impl Body {
             }
         }
     }
+
+    #[cfg(feature = "async")]
+    pub(crate) async fn async_write(
+        self,
+        reactor: wasi_async_runtime::Reactor,
+        mut target: impl crate::wasi::async_client::AsyncWriteTarget,
+    ) -> Result<(), Error> {
+        use async_iterator::Iterator;
+
+        let mut async_reader = self.into_async_reader(reactor);
+        while let Some(chunk) = async_reader.next().await {
+            match chunk {
+                Ok(data) => target.write(&data).await?,
+                Err(err) => return Err(err),
+            }
+        }
+        Ok(())
+    }
 }
 
 enum Kind {
     Reader(Box<dyn Read>, Option<u64>),
     Bytes(Bytes),
-    Incoming(streams::InputStream),
+    Incoming {
+        stream: InputStream,
+        incoming_body: IncomingBody,
+    },
+    #[cfg(feature = "async")]
+    Stream(std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<Vec<u8>, Error>>>>),
 }
 
 impl Kind {
@@ -239,7 +391,9 @@ impl Kind {
         match self {
             Kind::Reader(..) => None,
             Kind::Bytes(v) => Some(Kind::Bytes(v.clone())),
-            Kind::Incoming(..) => None,
+            Kind::Incoming { .. } => None,
+            #[cfg(feature = "async")]
+            Kind::Stream(_) => None,
         }
     }
 }
@@ -295,15 +449,6 @@ impl From<Bytes> for Body {
     }
 }
 
-impl From<streams::InputStream> for Body {
-    #[inline]
-    fn from(s: streams::InputStream) -> Body {
-        Body {
-            kind: Some(Kind::Incoming(s)),
-        }
-    }
-}
-
 impl fmt::Debug for Kind {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         match *self {
@@ -312,7 +457,9 @@ impl fmt::Debug for Kind {
                 .field("length", &DebugLength(v))
                 .finish(),
             Kind::Bytes(ref v) => fmt::Debug::fmt(v, f),
-            Kind::Incoming(_) => f.debug_struct("Incoming").finish(),
+            Kind::Incoming { .. } => f.debug_struct("Incoming").finish(),
+            #[cfg(feature = "async")]
+            Kind::Stream(_) => f.debug_struct("Stream").finish(),
         }
     }
 }
@@ -331,27 +478,109 @@ impl<'a> fmt::Debug for DebugLength<'a> {
 pub(crate) enum Reader {
     Reader(Box<dyn Read>),
     Bytes(Cursor<Bytes>),
-    Wasi(streams::InputStream),
+    Wasi {
+        body_stream: InputStream,
+        _incoming_body: IncomingBody,
+    },
+}
+
+impl Reader {
+    #[cfg(feature = "async")]
+    pub(crate) fn into_async(self, reactor: wasi_async_runtime::Reactor) -> AsyncReader {
+        AsyncReader::ReaderBased {
+            reader: self,
+            reactor,
+        }
+    }
 }
 
 impl Read for Reader {
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        match *self {
-            Reader::Reader(ref mut rdr) => rdr.read(buf),
-            Reader::Bytes(ref mut rdr) => rdr.read(buf),
-            Reader::Wasi(ref mut body_stream) => {
-                match body_stream.blocking_read(buf.len() as u64) {
-                    Ok(body_chunk) => {
-                        let len = body_chunk.len();
-                        buf[..len].copy_from_slice(&body_chunk);
-                        Ok(len)
-                    }
-                    Err(streams::StreamError::Closed) => Ok(0),
-                    Err(streams::StreamError::LastOperationFailed(err)) => {
-                        Err(io::Error::new(io::ErrorKind::Other, err.to_debug_string()))
+        match self {
+            Reader::Reader(rdr) => rdr.read(buf),
+            Reader::Bytes(rdr) => rdr.read(buf),
+            Reader::Wasi { body_stream, .. } => match body_stream.blocking_read(buf.len() as u64) {
+                Ok(body_chunk) => {
+                    let len = body_chunk.len();
+                    buf[..len].copy_from_slice(&body_chunk);
+                    Ok(len)
+                }
+                Err(streams::StreamError::Closed) => Ok(0),
+                Err(streams::StreamError::LastOperationFailed(err)) => {
+                    Err(io::Error::new(io::ErrorKind::Other, err.to_debug_string()))
+                }
+            },
+        }
+    }
+}
+
+#[cfg(feature = "async")]
+pub(crate) enum AsyncReader {
+    ReaderBased {
+        reader: Reader,
+        reactor: wasi_async_runtime::Reactor,
+    },
+    StreamBased {
+        stream: std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<Vec<u8>, Error>>>>,
+    },
+}
+
+#[cfg(feature = "async")]
+impl async_iterator::Iterator for AsyncReader {
+    type Item = Result<Vec<u8>, Error>;
+
+    async fn next(&mut self) -> Option<Self::Item> {
+        const CHUNK_SIZE: usize = 4096; // Define a constant chunk size
+
+        match self {
+            Self::ReaderBased { reader, reactor } => match reader {
+                Reader::Reader(rdr) => {
+                    let mut buf = vec![0; CHUNK_SIZE];
+                    rdr.read(&mut buf)
+                        .map(|n| {
+                            if n == 0 {
+                                None
+                            } else {
+                                Some(buf[..n].to_vec())
+                            }
+                        })
+                        .map_err(|err| Error::new(crate::error::Kind::Body, Some(err)))
+                        .transpose()
+                }
+                Reader::Bytes(rdr) => {
+                    let mut buf = vec![0; CHUNK_SIZE];
+                    rdr.read(&mut buf)
+                        .map(|n| {
+                            if n == 0 {
+                                None
+                            } else {
+                                Some(buf[..n].to_vec())
+                            }
+                        })
+                        .map_err(|err| Error::new(crate::error::Kind::Body, Some(err)))
+                        .transpose()
+                }
+                Reader::Wasi { body_stream, .. } => {
+                    let pollable = body_stream.subscribe();
+                    reactor.wait_for(pollable).await;
+
+                    let buf = body_stream.read(CHUNK_SIZE as u64);
+                    match buf {
+                        Ok(body_chunk) => {
+                            if body_chunk.is_empty() {
+                                None
+                            } else {
+                                Some(Ok(body_chunk))
+                            }
+                        }
+                        Err(streams::StreamError::Closed) => None,
+                        Err(streams::StreamError::LastOperationFailed(err)) => Some(Err(
+                            Error::new(crate::error::Kind::Body, Some(err.to_debug_string())),
+                        )),
                     }
                 }
-            }
+            },
+            AsyncReader::StreamBased { stream } => stream.next().await,
         }
     }
 }

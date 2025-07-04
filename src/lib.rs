@@ -257,12 +257,12 @@ pub use self::error::{Error, Result};
 pub use self::into_url::IntoUrl;
 pub use self::response::ResponseBuilderExt;
 
-mod bindings;
 mod util;
 mod wasi;
 
-pub use self::wasi::{get, Body, Client, ClientBuilder, Request, RequestBuilder, Response};
-pub use bindings::wasi::io::streams::{InputStream, StreamError};
+pub use self::wasi::{Body, Client, ClientBuilder, Request, RequestBuilder, Response};
+pub use ::wasi::http::types::IncomingBody;
+pub use ::wasi::io::streams::{InputStream, StreamError};
 
 #[cfg(feature = "multipart")]
 pub use self::wasi::multipart;
