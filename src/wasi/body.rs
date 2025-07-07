@@ -1,6 +1,5 @@
 use crate::Error;
 use bytes::Bytes;
-use futures::StreamExt;
 use std::fmt;
 use std::fs::File;
 use std::io::{self, Cursor, Read};
@@ -260,6 +259,7 @@ impl Body {
                 stream,
                 incoming_body,
             }) => (stream, incoming_body),
+            #[cfg(feature = "async")]
             Some(Kind::Stream(_)) => panic!("Body is not backed up by an input stream"),
             None => panic!("Body has already been extracted"),
         }
@@ -530,6 +530,8 @@ impl async_iterator::Iterator for AsyncReader {
     type Item = Result<Vec<u8>, Error>;
 
     async fn next(&mut self) -> Option<Self::Item> {
+        use futures::StreamExt;
+
         const CHUNK_SIZE: usize = 4096; // Define a constant chunk size
 
         match self {

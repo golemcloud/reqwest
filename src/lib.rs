@@ -266,3 +266,6 @@ pub use ::wasi::io::streams::{InputStream, StreamError};
 
 #[cfg(feature = "multipart")]
 pub use self::wasi::multipart;
+
+#[cfg(feature = "async")]
+pub use crate::wasi::{CustomRequestExecution, CustomRequestBodyWriter};

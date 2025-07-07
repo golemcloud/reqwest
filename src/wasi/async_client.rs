@@ -9,12 +9,15 @@ use http::header::{HeaderMap, HeaderValue, ACCEPT, USER_AGENT};
 use http::{HeaderName, Method, StatusCode};
 use std::cmp::min;
 use std::convert::{TryFrom, TryInto};
+use std::future::Future;
 use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
+use url::Url;
 use wasi_async_runtime::Reactor;
 
 use wasi::clocks::*;
+use wasi::http::types::{FutureIncomingResponse, OutgoingBody, OutgoingRequest, RequestOptions};
 use wasi::http::*;
 use wasi::io::*;
 
@@ -23,7 +26,7 @@ struct Config {
     headers: HeaderMap,
     connect_timeout: Option<Duration>,
     timeout: Option<Duration>,
-    error: Option<crate::Error>,
+    error: Option<Error>,
 }
 
 /// A `Client` to make Requests with.
@@ -137,6 +140,20 @@ impl Client {
         RequestBuilder::new(self.clone(), req)
     }
 
+    /// Creates a `CustomRequestExecution` for a `Request`, that allows customizing the
+    /// request execution by initiating the request and writing to the request body imperatively.
+    pub fn execute_custom(&self, request: Request) -> Result<CustomRequestExecution, Error> {
+        let custom_execution = CustomRequestExecution::new(
+            self.inner.reactor.clone(),
+            request,
+            &self.inner.headers,
+            &self.inner.connect_timeout,
+            &self.inner.first_byte_timeout,
+            &self.inner.between_bytes_timeout,
+        )?;
+        Ok(custom_execution)
+    }
+
     /// Executes a `Request`.
     ///
     /// A `Request` can be built manually with `Request::new()` or obtained
@@ -149,131 +166,28 @@ impl Client {
     ///
     /// This method fails if there was an error while sending request,
     /// redirect loop was detected or redirect limit was exhausted.
-    pub async fn execute(&self, request: Request) -> Result<Response, crate::Error> {
-        let mut header_key_values: Vec<(String, Vec<u8>)> = vec![];
-        for (name, value) in self.inner.headers.iter() {
-            if let Ok(value) = value.to_str() {
-                header_key_values.push((name.as_str().to_string(), value.into()))
-            }
-        }
+    pub async fn execute(&self, request: Request) -> Result<Response, Error> {
+        let mut custom = self.execute_custom(request)?;
+        let body = custom.body.take();
 
-        let (method, url, headers, body, timeout, _version) = request.pieces();
-        for (name, value) in headers.iter() {
-            if let Ok(value) = value.to_str() {
-                header_key_values.push((name.as_str().to_string(), value.into()))
-            }
-        }
+        if let Some(body) = body {
+            let body_writer = custom.init_request_body()?;
+            custom.send_request()?;
 
-        let scheme = match url.scheme() {
-            "http" => types::Scheme::Http,
-            "https" => types::Scheme::Https,
-            other => types::Scheme::Other(other.to_string()),
-        };
-        let headers = types::Fields::from_list(&header_key_values)?;
-        let request = types::OutgoingRequest::new(headers);
-        let path_with_query = match url.query() {
-            Some(query) => format!("{}?{}", url.path(), query),
-            None => url.path().to_string(),
-        };
-        request
-            .set_method(&encode_method(method))
-            .map_err(|e| failure_point("set_method", e))?;
-        request
-            .set_path_with_query(Some(&path_with_query))
-            .map_err(|e| failure_point("set_path_with_query", e))?;
-        request
-            .set_scheme(Some(&scheme))
-            .map_err(|e| failure_point("set_scheme", e))?;
-        request
-            .set_authority(Some(url.authority()))
-            .map_err(|e| failure_point("set_authority", e))?;
+            let send_body = body_writer.send_body(body)?;
+            let receive_response_future = custom.receive_response();
 
-        let options = types::RequestOptions::new();
-        options
-            .set_connect_timeout(self.inner.connect_timeout.map(|d| d.as_nanos() as u64))
-            .map_err(|e| failure_point("set_connect_timeout", e))?;
-        options
-            .set_first_byte_timeout(
-                timeout
-                    .or(self.inner.first_byte_timeout)
-                    .map(|d| d.as_nanos() as u64),
-            )
-            .map_err(|e| failure_point("set_first_byte_timeout", e))?;
-        options
-            .set_between_bytes_timeout(
-                timeout
-                    .or(self.inner.between_bytes_timeout)
-                    .map(|d| d.as_nanos() as u64),
-            )
-            .map_err(|e| failure_point("set_between_bytes_timeout", e))?;
-
-        let maybe_outgoing_body = if let Some(body) = body {
-            let request_body = request.body().map_err(|e| failure_point("body", e))?;
-            Some((body, request_body))
+            let (incoming_response, _) = (receive_response_future, send_body).join().await;
+            incoming_response
         } else {
-            None
-        };
-
-        let future_incoming_response = outgoing_handler::handle(request, Some(options))?;
-
-        let target = if let Some((body, outgoing_body)) = maybe_outgoing_body {
-            let outgoing_body_stream = outgoing_body
-                .write()
-                .map_err(|e| failure_point("write", e))?;
-
-            let target = OutputStreamWriter::new(outgoing_body_stream, self.inner.reactor.clone());
-            Some((body, outgoing_body, target))
-        } else {
-            None
-        };
-
-        let request_body_future = async move {
-            if let Some((body, outgoing_body, target)) = target {
-                let write_result = body.async_write(self.inner.reactor.clone(), target).await;
-                if let Ok(_) = write_result {
-                    types::OutgoingBody::finish(outgoing_body, None)
-                        .map_err(|error_code| error_code.into())
-                } else {
-                    write_result
-                }
-            } else {
-                Ok(())
-            }
-        };
-
-        let receive_timeout = timeout.or(self.inner.first_byte_timeout);
-        let incoming_response_future =
-            self.get_incoming_response(&future_incoming_response, receive_timeout);
-        let (incoming_response, _) = (incoming_response_future, request_body_future).join().await;
-        let incoming_response = incoming_response?;
-
-        let status = incoming_response.status();
-        let status_code =
-            StatusCode::from_u16(status).map_err(|e| Error::new(Kind::Decode, Some(e)))?;
-
-        let response_fields = incoming_response.headers();
-        let response_headers = Self::fields_to_header_map(&response_fields);
-
-        let response_body = incoming_response
-            .consume()
-            .map_err(|e| failure_point("consume", e))?;
-        let response_body_stream = response_body
-            .stream()
-            .map_err(|e| failure_point("stream", e))?;
-        let body: Body = Body::from_incoming(response_body_stream, response_body);
-
-        Ok(Response::new(
-            status_code,
-            response_headers,
-            body,
-            incoming_response,
-            url,
-            self.inner.reactor.clone(),
-        ))
+            custom.send_request()?;
+            let response = custom.receive_response().await?;
+            Ok(response)
+        }
     }
 
-    async fn get_incoming_response(
-        &self,
+    pub(crate) async fn get_incoming_response(
+        reactor: Reactor,
         future_incoming_response: &types::FutureIncomingResponse,
         timeout: Option<Duration>,
     ) -> Result<types::IncomingResponse, Error> {
@@ -290,11 +204,8 @@ impl Client {
                         .as_nanos() as u64,
                 );
                 let pollable = future_incoming_response.subscribe();
-                let wait_for_deadline =
-                    self.inner.reactor.wait_for(deadline_pollable).map(|_| None);
-                let wait_for_response = self
-                    .inner
-                    .reactor
+                let wait_for_deadline = reactor.wait_for(deadline_pollable).map(|_| None);
+                let wait_for_response = reactor
                     .wait_for(pollable)
                     .map(|_| future_incoming_response.get());
                 let result = (wait_for_deadline, wait_for_response).race().await;
@@ -436,6 +347,7 @@ pub(crate) trait AsyncWriteTarget {
     async fn write(&mut self, chunk: &[u8]) -> Result<(), crate::Error>;
 }
 
+#[derive(Debug)]
 pub(crate) struct OutputStreamWriter {
     stream: wasi::io::streams::OutputStream,
     reactor: Reactor,
@@ -447,7 +359,7 @@ impl OutputStreamWriter {
     }
 }
 
-impl AsyncWriteTarget for OutputStreamWriter {
+impl AsyncWriteTarget for &mut OutputStreamWriter {
     async fn write(&mut self, mut chunk: &[u8]) -> Result<(), Error> {
         while !chunk.is_empty() {
             let ready = self.stream.subscribe();
@@ -490,5 +402,244 @@ impl AsyncWriteTarget for OutputStreamWriter {
             }
         }
         Ok(())
+    }
+}
+
+/// Interface for sending a custom request body
+#[derive(Debug)]
+pub struct CustomRequestBodyWriter {
+    reactor: Reactor,
+    outgoing_body_writer: Option<OutputStreamWriter>,
+    outgoing_body: OutgoingBody,
+}
+
+impl CustomRequestBodyWriter {
+    /// Writes a chunk of the request body.
+    pub async fn write_body_chunk(&mut self, chunk: &[u8]) -> Result<(), Error> {
+        let mut writer = self.outgoing_body_writer.as_mut().ok_or_else(|| {
+            Error::new(
+                Kind::Request,
+                Some(std::io::Error::new(
+                    ErrorKind::Other,
+                    "Request body not initialized",
+                )),
+            )
+        })?;
+        writer.write(chunk).await?;
+        Ok(())
+    }
+
+    /// Finishes the request body, signaling that no more data will be sent.
+    pub fn finish_body(mut self) -> Result<(), Error> {
+        let _ = self.outgoing_body_writer.take().ok_or_else(|| {
+            Error::new(
+                Kind::Request,
+                Some(std::io::Error::new(
+                    ErrorKind::Other,
+                    "Request body writer not initialized",
+                )),
+            )
+        })?;
+        OutgoingBody::finish(self.outgoing_body, None)?;
+        Ok(())
+    }
+
+    /// Creates a future for sending the body asynchronously.
+    pub fn send_body(
+        mut self,
+        body: Body,
+    ) -> Result<impl Future<Output = Result<(), Error>>, Error> {
+        let mut writer = self.outgoing_body_writer.take().ok_or_else(|| {
+            Error::new(
+                Kind::Request,
+                Some(std::io::Error::new(
+                    ErrorKind::Other,
+                    "Request body not initialized",
+                )),
+            )
+        })?;
+        let reactor = self.reactor.clone();
+        Ok(async move {
+            match body.async_write(reactor, &mut writer).await {
+                Ok(_) => {
+                    drop(writer);
+                    OutgoingBody::finish(self.outgoing_body, None).map_err(|err| err.into())
+                }
+                Err(err) => Err(err),
+            }
+        })
+    }
+}
+
+/// Represents a customizable HTTP request execution
+#[derive(Debug)]
+pub struct CustomRequestExecution {
+    reactor: Reactor,
+    /// The request body, if any.
+    pub body: Option<Body>,
+    url: Url,
+    timeout: Option<Duration>,
+    request: Option<OutgoingRequest>,
+    options: Option<RequestOptions>,
+    future_incoming_response: Option<FutureIncomingResponse>,
+}
+
+impl CustomRequestExecution {
+    pub(crate) fn new(
+        reactor: Reactor,
+        request: Request,
+        default_headers: &HeaderMap,
+        connect_timeout: &Option<Duration>,
+        first_byte_timeout: &Option<Duration>,
+        between_bytes_timeout: &Option<Duration>,
+    ) -> Result<Self, Error> {
+        let mut header_key_values: Vec<(String, Vec<u8>)> = vec![];
+        for (name, value) in default_headers.iter() {
+            if let Ok(value) = value.to_str() {
+                header_key_values.push((name.as_str().to_string(), value.into()))
+            }
+        }
+
+        let (method, url, headers, body, timeout, _version) = request.pieces();
+        for (name, value) in headers.iter() {
+            if let Ok(value) = value.to_str() {
+                header_key_values.push((name.as_str().to_string(), value.into()))
+            }
+        }
+
+        let scheme = match url.scheme() {
+            "http" => types::Scheme::Http,
+            "https" => types::Scheme::Https,
+            other => types::Scheme::Other(other.to_string()),
+        };
+        let headers = types::Fields::from_list(&header_key_values)?;
+        let request = types::OutgoingRequest::new(headers);
+        let path_with_query = match url.query() {
+            Some(query) => format!("{}?{}", url.path(), query),
+            None => url.path().to_string(),
+        };
+        request
+            .set_method(&encode_method(method))
+            .map_err(|e| failure_point("set_method", e))?;
+        request
+            .set_path_with_query(Some(&path_with_query))
+            .map_err(|e| failure_point("set_path_with_query", e))?;
+        request
+            .set_scheme(Some(&scheme))
+            .map_err(|e| failure_point("set_scheme", e))?;
+        request
+            .set_authority(Some(url.authority()))
+            .map_err(|e| failure_point("set_authority", e))?;
+
+        let options = types::RequestOptions::new();
+        options
+            .set_connect_timeout(connect_timeout.map(|d| d.as_nanos() as u64))
+            .map_err(|e| failure_point("set_connect_timeout", e))?;
+        options
+            .set_first_byte_timeout(timeout.or(*first_byte_timeout).map(|d| d.as_nanos() as u64))
+            .map_err(|e| failure_point("set_first_byte_timeout", e))?;
+        options
+            .set_between_bytes_timeout(
+                timeout
+                    .or(*between_bytes_timeout)
+                    .map(|d| d.as_nanos() as u64),
+            )
+            .map_err(|e| failure_point("set_between_bytes_timeout", e))?;
+
+        Ok(CustomRequestExecution {
+            reactor,
+            body,
+            url,
+            request: Some(request),
+            options: Some(options),
+            timeout: timeout.or(*first_byte_timeout),
+            future_incoming_response: None,
+        })
+    }
+
+    /// Initializes writing the request body.
+    pub fn init_request_body(&mut self) -> Result<CustomRequestBodyWriter, Error> {
+        let request = self.request.as_ref().ok_or_else(|| {
+            Error::new(
+                Kind::Request,
+                Some(std::io::Error::new(
+                    ErrorKind::Other,
+                    "Request already sent",
+                )),
+            )
+        })?;
+        let outgoing_body = request.body().map_err(|e| failure_point("body", e))?;
+        let outgoing_body_stream = outgoing_body
+            .write()
+            .map_err(|e| failure_point("write", e))?;
+
+        let outgoing_body_writer =
+            OutputStreamWriter::new(outgoing_body_stream, self.reactor.clone());
+
+        Ok(CustomRequestBodyWriter {
+            reactor: self.reactor.clone(),
+            outgoing_body_writer: Some(outgoing_body_writer),
+            outgoing_body,
+        })
+    }
+
+    /// Creates the future for sending the request to the server.
+    pub fn send_request(&mut self) -> Result<(), Error> {
+        let future_incoming_response = outgoing_handler::handle(
+            self.request.take().ok_or_else(|| {
+                Error::new(
+                    Kind::Request,
+                    Some(std::io::Error::new(
+                        ErrorKind::Other,
+                        "Request already sent",
+                    )),
+                )
+            })?,
+            self.options.take(),
+        )?;
+        self.future_incoming_response = Some(future_incoming_response);
+        Ok(())
+    }
+
+    /// Waits for the HTTP response to be received.
+    pub async fn receive_response(self) -> Result<Response, Error> {
+        let future_incoming_response = self.future_incoming_response.as_ref().ok_or_else(|| {
+            Error::new(
+                Kind::Request,
+                Some(std::io::Error::new(
+                    ErrorKind::Other,
+                    "receive_response already called",
+                )),
+            )
+        })?;
+        let incoming_response = Client::get_incoming_response(
+            self.reactor.clone(),
+            future_incoming_response,
+            self.timeout,
+        )
+        .await?;
+        let status = incoming_response.status();
+        let status_code =
+            StatusCode::from_u16(status).map_err(|e| Error::new(Kind::Decode, Some(e)))?;
+
+        let response_fields = incoming_response.headers();
+        let response_headers = Client::fields_to_header_map(&response_fields);
+
+        let response_body = incoming_response
+            .consume()
+            .map_err(|e| failure_point("consume", e))?;
+        let response_body_stream = response_body
+            .stream()
+            .map_err(|e| failure_point("stream", e))?;
+        let body: Body = Body::from_incoming(response_body_stream, response_body);
+
+        Ok(Response::new(
+            status_code,
+            response_headers,
+            body,
+            incoming_response,
+            self.url,
+            self.reactor,
+        ))
     }
 }
