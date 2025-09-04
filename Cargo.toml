@@ -25,7 +25,12 @@ default = ["charset"]
 charset = ["dep:encoding_rs"]
 json = ["dep:serde_json"]
 multipart = ["dep:mime_guess", "dep:rand"]
-async = ["dep:wasi-async-runtime", "dep:async-iterator", "dep:futures-concurrency", "dep:futures"]
+async = [
+    "dep:wasi-async-runtime",
+    "dep:async-iterator",
+    "dep:futures-concurrency",
+    "dep:futures",
+]
 
 [dependencies]
 base64 = "0.22"
@@ -36,7 +41,7 @@ mime = "0.3.16"
 percent-encoding = "2.1"
 serde = "1.0"
 serde_urlencoded = "0.7.1"
-wasi = "0.12.1+wasi-0.2.0"
+wasi = "0.14.1+wasi-0.2.3"
 # Optional deps...
 
 ## async
