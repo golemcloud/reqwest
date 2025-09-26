@@ -23,4 +23,4 @@ pub use request::{Request, RequestBuilder};
 pub use response::Response;
 
 #[cfg(feature = "async")]
-pub use client::{CustomRequestExecution, CustomRequestBodyWriter};
+pub use client::{CustomRequestBodyWriter, CustomRequestExecution};

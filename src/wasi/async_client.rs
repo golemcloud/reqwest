@@ -14,12 +14,12 @@ use std::io::ErrorKind;
 use std::sync::Arc;
 use std::time::Duration;
 use url::Url;
-use wasi_async_runtime::Reactor;
 
 use wasi::clocks::*;
 use wasi::http::types::{FutureIncomingResponse, OutgoingBody, OutgoingRequest, RequestOptions};
 use wasi::http::*;
 use wasi::io::*;
+use wstd::io::AsyncPollable;
 
 #[derive(Debug)]
 struct Config {
@@ -45,7 +45,6 @@ pub struct Client {
 
 #[derive(Debug)]
 struct ClientRef {
-    reactor: Reactor,
     pub headers: HeaderMap,
     pub connect_timeout: Option<Duration>,
     pub first_byte_timeout: Option<Duration>,
@@ -57,20 +56,19 @@ struct ClientRef {
 #[derive(Debug)]
 pub struct ClientBuilder {
     config: Config,
-    reactor: Reactor,
 }
 
 impl Client {
     /// Constructs a new `Client`.
-    pub fn new(reactor: Reactor) -> Self {
-        Client::builder(reactor).build().expect("Client::new()")
+    pub fn new() -> Self {
+        Client::builder().build().expect("Client::new()")
     }
 
     /// Creates a `ClientBuilder` to configure a `Client`.
     ///
     /// This is the same as `ClientBuilder::new()`.
-    pub fn builder(reactor: Reactor) -> ClientBuilder {
-        ClientBuilder::new(reactor)
+    pub fn builder() -> ClientBuilder {
+        ClientBuilder::new()
     }
 
     /// Convenience method to make a `GET` request to a URL.
@@ -144,7 +142,6 @@ impl Client {
     /// request execution by initiating the request and writing to the request body imperatively.
     pub fn execute_custom(&self, request: Request) -> Result<CustomRequestExecution, Error> {
         let custom_execution = CustomRequestExecution::new(
-            self.inner.reactor.clone(),
             request,
             &self.inner.headers,
             &self.inner.connect_timeout,
@@ -187,7 +184,6 @@ impl Client {
     }
 
     pub(crate) async fn get_incoming_response(
-        reactor: Reactor,
         future_incoming_response: &types::FutureIncomingResponse,
         timeout: Option<Duration>,
     ) -> Result<types::IncomingResponse, Error> {
@@ -204,9 +200,11 @@ impl Client {
                         .as_nanos() as u64,
                 );
                 let pollable = future_incoming_response.subscribe();
-                let wait_for_deadline = reactor.wait_for(deadline_pollable).map(|_| None);
-                let wait_for_response = reactor
-                    .wait_for(pollable)
+                let wait_for_deadline = AsyncPollable::new(deadline_pollable)
+                    .wait_for()
+                    .map(|_| None);
+                let wait_for_response = AsyncPollable::new(pollable)
+                    .wait_for()
                     .map(|_| future_incoming_response.get());
                 let result = (wait_for_deadline, wait_for_response).race().await;
 
@@ -246,12 +244,11 @@ impl ClientBuilder {
     /// Constructs a new `ClientBuilder`.
     ///
     /// This is the same as `Client::builder()`.
-    pub fn new(reactor: Reactor) -> Self {
+    pub fn new() -> Self {
         let mut headers: HeaderMap<HeaderValue> = HeaderMap::with_capacity(2);
         headers.insert(ACCEPT, HeaderValue::from_static("*/*"));
 
         Self {
-            reactor,
             config: Config {
                 headers,
                 connect_timeout: None,
@@ -274,7 +271,6 @@ impl ClientBuilder {
 
         Ok(Client {
             inner: Arc::new(ClientRef {
-                reactor: self.reactor,
                 headers: self.config.headers,
                 connect_timeout: self.config.connect_timeout,
                 first_byte_timeout: self.config.timeout,
@@ -350,12 +346,11 @@ pub(crate) trait AsyncWriteTarget {
 #[derive(Debug)]
 pub(crate) struct OutputStreamWriter {
     stream: wasi::io::streams::OutputStream,
-    reactor: Reactor,
 }
 
 impl OutputStreamWriter {
-    pub fn new(stream: wasi::io::streams::OutputStream, reactor: Reactor) -> Self {
-        Self { stream, reactor }
+    pub fn new(stream: wasi::io::streams::OutputStream) -> Self {
+        Self { stream }
     }
 }
 
@@ -363,7 +358,7 @@ impl AsyncWriteTarget for &mut OutputStreamWriter {
     async fn write(&mut self, mut chunk: &[u8]) -> Result<(), Error> {
         while !chunk.is_empty() {
             let ready = self.stream.subscribe();
-            self.reactor.wait_for(ready).await;
+            AsyncPollable::new(ready).wait_for().await;
             let max_length = self.stream.check_write()?;
             if max_length == 0 {
                 return Err(Error::new(
@@ -408,7 +403,6 @@ impl AsyncWriteTarget for &mut OutputStreamWriter {
 /// Interface for sending a custom request body
 #[derive(Debug)]
 pub struct CustomRequestBodyWriter {
-    reactor: Reactor,
     outgoing_body_writer: Option<OutputStreamWriter>,
     outgoing_body: OutgoingBody,
 }
@@ -458,9 +452,8 @@ impl CustomRequestBodyWriter {
                 )),
             )
         })?;
-        let reactor = self.reactor.clone();
         Ok(async move {
-            match body.async_write(reactor, &mut writer).await {
+            match body.async_write(&mut writer).await {
                 Ok(_) => {
                     drop(writer);
                     OutgoingBody::finish(self.outgoing_body, None).map_err(|err| err.into())
@@ -474,7 +467,6 @@ impl CustomRequestBodyWriter {
 /// Represents a customizable HTTP request execution
 #[derive(Debug)]
 pub struct CustomRequestExecution {
-    reactor: Reactor,
     /// The request body, if any.
     pub body: Option<Body>,
     url: Url,
@@ -486,7 +478,6 @@ pub struct CustomRequestExecution {
 
 impl CustomRequestExecution {
     pub(crate) fn new(
-        reactor: Reactor,
         request: Request,
         default_headers: &HeaderMap,
         connect_timeout: &Option<Duration>,
@@ -547,7 +538,6 @@ impl CustomRequestExecution {
             .map_err(|e| failure_point("set_between_bytes_timeout", e))?;
 
         Ok(CustomRequestExecution {
-            reactor,
             body,
             url,
             request: Some(request),
@@ -573,11 +563,9 @@ impl CustomRequestExecution {
             .write()
             .map_err(|e| failure_point("write", e))?;
 
-        let outgoing_body_writer =
-            OutputStreamWriter::new(outgoing_body_stream, self.reactor.clone());
+        let outgoing_body_writer = OutputStreamWriter::new(outgoing_body_stream);
 
         Ok(CustomRequestBodyWriter {
-            reactor: self.reactor.clone(),
             outgoing_body_writer: Some(outgoing_body_writer),
             outgoing_body,
         })
@@ -612,12 +600,8 @@ impl CustomRequestExecution {
                 )),
             )
         })?;
-        let incoming_response = Client::get_incoming_response(
-            self.reactor.clone(),
-            future_incoming_response,
-            self.timeout,
-        )
-        .await?;
+        let incoming_response =
+            Client::get_incoming_response(future_incoming_response, self.timeout).await?;
         let status = incoming_response.status();
         let status_code =
             StatusCode::from_u16(status).map_err(|e| Error::new(Kind::Decode, Some(e)))?;
@@ -639,7 +623,6 @@ impl CustomRequestExecution {
             body,
             incoming_response,
             self.url,
-            self.reactor,
         ))
     }
 }

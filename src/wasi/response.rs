@@ -28,8 +28,6 @@ pub struct Response {
     incoming_response: types::IncomingResponse,
     url: Url,
     extensions: Extensions,
-    #[cfg(feature = "async")]
-    reactor: wasi_async_runtime::Reactor,
 }
 
 impl Response {
@@ -39,7 +37,6 @@ impl Response {
         body: Body,
         incoming_response: types::IncomingResponse,
         url: Url,
-        #[cfg(feature = "async")] reactor: wasi_async_runtime::Reactor,
     ) -> Response {
         Response {
             status,
@@ -48,8 +45,6 @@ impl Response {
             incoming_response,
             url,
             extensions: Extensions::default(),
-            #[cfg(feature = "async")]
-            reactor,
         }
     }
 
@@ -191,7 +186,7 @@ impl Response {
         mut self,
     ) -> impl async_iterator::Iterator<Item = Result<Vec<u8>, crate::Error>> {
         let sync_reader = self.body.take().unwrap().into_reader();
-        let async_reader = sync_reader.into_async(self.reactor.clone());
+        let async_reader = sync_reader.into_async();
         async_reader
     }
 

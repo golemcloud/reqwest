@@ -6,6 +6,7 @@ use std::io::{self, Cursor, Read};
 use wasi::http::types::IncomingBody;
 use wasi::io::streams::InputStream;
 use wasi::io::*;
+use wstd::runtime::AsyncPollable;
 
 /// An asynchronous request body.
 #[derive(Debug)]
@@ -285,14 +286,14 @@ impl Body {
     }
 
     #[cfg(feature = "async")]
-    pub(crate) fn into_async_reader(mut self, reactor: wasi_async_runtime::Reactor) -> AsyncReader {
+    pub(crate) fn into_async_reader(mut self) -> AsyncReader {
         if matches!(self.kind, Some(Kind::Stream(_))) {
             match self.kind.take() {
                 Some(Kind::Stream(stream)) => AsyncReader::StreamBased { stream },
                 _ => unreachable!(),
             }
         } else {
-            self.into_reader().into_async(reactor)
+            self.into_reader().into_async()
         }
     }
 
@@ -359,12 +360,11 @@ impl Body {
     #[cfg(feature = "async")]
     pub(crate) async fn async_write(
         self,
-        reactor: wasi_async_runtime::Reactor,
         mut target: impl crate::wasi::async_client::AsyncWriteTarget,
     ) -> Result<(), Error> {
         use async_iterator::Iterator;
 
-        let mut async_reader = self.into_async_reader(reactor);
+        let mut async_reader = self.into_async_reader();
         while let Some(chunk) = async_reader.next().await {
             match chunk {
                 Ok(data) => target.write(&data).await?,
@@ -486,11 +486,8 @@ pub(crate) enum Reader {
 
 impl Reader {
     #[cfg(feature = "async")]
-    pub(crate) fn into_async(self, reactor: wasi_async_runtime::Reactor) -> AsyncReader {
-        AsyncReader::ReaderBased {
-            reader: self,
-            reactor,
-        }
+    pub(crate) fn into_async(self) -> AsyncReader {
+        AsyncReader::ReaderBased { reader: self }
     }
 }
 
@@ -518,7 +515,6 @@ impl Read for Reader {
 pub(crate) enum AsyncReader {
     ReaderBased {
         reader: Reader,
-        reactor: wasi_async_runtime::Reactor,
     },
     StreamBased {
         stream: std::pin::Pin<Box<dyn futures::stream::Stream<Item = Result<Vec<u8>, Error>>>>,
@@ -535,7 +531,7 @@ impl async_iterator::Iterator for AsyncReader {
         const CHUNK_SIZE: usize = 4096; // Define a constant chunk size
 
         match self {
-            Self::ReaderBased { reader, reactor } => match reader {
+            Self::ReaderBased { reader } => match reader {
                 Reader::Reader(rdr) => {
                     let mut buf = vec![0; CHUNK_SIZE];
                     rdr.read(&mut buf)
@@ -564,21 +560,22 @@ impl async_iterator::Iterator for AsyncReader {
                 }
                 Reader::Wasi { body_stream, .. } => {
                     let pollable = body_stream.subscribe();
-                    reactor.wait_for(pollable).await;
+                    AsyncPollable::new(pollable).wait_for().await;
 
-                    let buf = body_stream.read(CHUNK_SIZE as u64);
-                    match buf {
-                        Ok(body_chunk) => {
-                            if body_chunk.is_empty() {
+                    let mut buf = vec![0; CHUNK_SIZE];
+                    let result = body_stream.read(&mut buf);
+                    match result {
+                        Ok(n) => {
+                            if n == 0 {
                                 None
                             } else {
-                                Some(Ok(body_chunk))
+                                Some(Ok(buf))
                             }
                         }
-                        Err(streams::StreamError::Closed) => None,
-                        Err(streams::StreamError::LastOperationFailed(err)) => Some(Err(
-                            Error::new(crate::error::Kind::Body, Some(err.to_debug_string())),
-                        )),
+                        Err(err) => Some(Err(Error::new(
+                            crate::error::Kind::Body,
+                            Some(err.to_string()),
+                        ))),
                     }
                 }
             },

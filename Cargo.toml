@@ -26,7 +26,7 @@ charset = ["dep:encoding_rs"]
 json = ["dep:serde_json"]
 multipart = ["dep:mime_guess", "dep:rand"]
 async = [
-    "dep:wasi-async-runtime",
+    "dep:wstd",
     "dep:async-iterator",
     "dep:futures-concurrency",
     "dep:futures",
@@ -41,14 +41,15 @@ mime = "0.3.16"
 percent-encoding = "2.1"
 serde = "1.0"
 serde_urlencoded = "0.7.1"
-wasi = "0.14.1+wasi-0.2.3"
+wasi = "=0.14.1+wasi-0.2.3"
+
 # Optional deps...
 
 ## async
 async-iterator = { version = "2.3.0", optional = true }
 futures = { version = "0.3.31", optional = true }
 futures-concurrency = { version = "7.6.3", optional = true }
-wasi-async-runtime = { version = "0.1.2", optional = true }
+wstd = { version = "=0.5.5", optional = true }
 
 ## json
 serde_json = { version = "1.0", optional = true }
