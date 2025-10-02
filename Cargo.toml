@@ -41,7 +41,7 @@ mime = "0.3.16"
 percent-encoding = "2.1"
 serde = "1.0"
 serde_urlencoded = "0.7.1"
-wasi = "0.14.1+wasi-0.2.3"
+wasi = "0.12.1+wasi-0.2.0"
 # Optional deps...
 
 ## async
