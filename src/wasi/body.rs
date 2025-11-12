@@ -6,7 +6,6 @@ use std::io::{self, Cursor, Read};
 use wasi::http::types::IncomingBody;
 use wasi::io::streams::InputStream;
 use wasi::io::*;
-use wstd::runtime::AsyncPollable;
 
 /// An asynchronous request body.
 #[derive(Debug)]
@@ -560,7 +559,7 @@ impl async_iterator::Iterator for AsyncReader {
                 }
                 Reader::Wasi { body_stream, .. } => {
                     let pollable = body_stream.subscribe();
-                    AsyncPollable::new(pollable).wait_for().await;
+                    wstd::runtime::AsyncPollable::new(pollable).wait_for().await;
 
                     let mut buf = vec![0; CHUNK_SIZE];
                     let result = body_stream.read(&mut buf);
